@@ -4,7 +4,7 @@ Real-time hand + face tracking with MediaPipe — fingertip positions, movement 
 
 ## Features
 
-- **Multi-hand tracking** — up to 2 hands, each with its own smoothing + gesture debounce slot (matched by handedness)
+- **Multi-hand tracking** — up to 2 hands, each with its own smoothing + gesture debounce slot (matched by wrist-anchor proximity across frames)
 - **Multi-face tracking** — up to 4 faces, ordered left-to-right
 - **Gesture-controlled face blur** — stable PINCH toggles Gaussian blur on all visible faces (edge-triggered + cooldown, state persists with no hands); last-known boxes cover brief detection drops
 - **Smart Privacy Mode** — `OFF / FACE_BLUR / STRICT / AUTO` with configurable rules, Gaussian or pixelate obfuscation, PINCH or `M`/`P` keys to switch
@@ -127,6 +127,23 @@ needed. FPS counter included. Press `q` to quit. Without a display
 > (same API, enables `imshow`). Headless is fine
 > for JSON-only piping. All inference is CPU-local.
 
+### Phone camera via v4l2loopback
+
+OpenCV opens `/dev/videoN` by its number, so pass it to `--camera`:
+
+```bash
+# terminal 1: feed the phone stream into the loopback device (keep running)
+ffmpeg -i http://192.168.1.71:8080/video \
+        -vf format=yuv420p \
+        -f v4l2 /dev/video10
+# terminal 2: phone cam
+python3 main.py --camera 10 [--control]
+# USB webcam instead (skip /dev/video1 — usually a metadata node, not video)
+python3 main.py --camera 0
+```
+
+Quick device check: `python3 -c "from capture import Camera; c=Camera(10); print(c.read()[0]); c.release()"` → `True` means readable.
+
 ### Static image
 
 ```bash
@@ -145,12 +162,16 @@ python3 cli_static.py path/to/image.jpg --blur --out preview.jpg  # save blurred
 | `Q` | quit |
 | `C` | gesture control master on/off (only with `--control`) |
 
-PINCH gesture (thumb + index together until `[STABLE]`) behaves like `P`.
+PINCH gesture (thumb + index together until `[STABLE]`) behaves like `P`
+when gesture-control master is OFF (or without `--control`); with master ON
+it owns volume mode instead — never both at once.
 
 ### Gesture-controlled face blur
 
 PINCH (thumb tip + index tip together, held ~0.5 s until `[STABLE]`)
-toggles face blur on/off. The toggle fires once per pinch (rising edge +
+toggles face blur on/off — unless gesture-control master is ON, in which
+case PINCH owns volume mode and privacy is switched via `M`/`P` keys.
+The toggle fires once per pinch (rising edge +
 1 s cooldown), so holding the pinch never retriggers; the on/off state
 persists even when no hand is visible. The preview shows
 `BLUR: ON (N face(s))` in green (grey when off). Briefly dropped face
@@ -214,6 +235,8 @@ One object per frame with `hands` (0–2 entries) and `faces` (0–4 entries):
   ],
   "blur": {"enabled": true, "faces_blurred": 1},
   "privacy": {"mode": "FACE_BLUR", "active": true, "kind": "GAUSSIAN", "reason": "mode"},
+  "control": {"enabled": true, "volume_mode": false, "last_action": "media_next",
+              "volume_pct": 60, "muted": false, "now_playing": "Artist - Title"},
   "analytics": {"frames": 120, "unique_hands": 1, "unique_faces": 1, "active": 2,
                 "avg_confidence": 0.95, "infer_ms": 21.4, "fps": 29.8, "rss_mb": "N/A"}
 }
@@ -235,6 +258,7 @@ Six layers keep the output steady on live video:
 | Teleport guard | `tracker.py` | per-frame tip displacement clamped to `max_jump` (default 0.5): real fast motion converges in a few frames, one-frame spikes barely register |
 | EMA smoothing | `tracker.py`, `face_tracker.py` | exponential moving average on tips and on face center/box/yaw/pitch; per-subject state, auto-reset after hand/face loss |
 | Gesture debounce + hysteresis | `gesture.py` | new gestures must persist `debounce_frames`; PINCH exits at 1.5× the enter threshold; confidence is EMA-smoothed and always describes the returned (debounced) gesture |
+| Control state machine | `control.py` | hold-to-fire dwell, per-action cooldowns, WAIT_FOR_NEUTRAL re-arm, master gate; pinch-hold enters volume mode with deadzone + throttled targets |
 | Slot hygiene | `multi.py` | missed-frame counters, debounce reset after prolonged loss, stale-slot pruning, hard slot cap |
 
 ## Tests
@@ -251,7 +275,7 @@ python3 -m pytest
 |------|---------|
 | `main.py` | live camera loop (tracking + gesture + window/JSON) |
 | `detect.py` | MediaPipe HandLandmarker wrapper (up to 2 hands) |
-| `face.py` | MediaPipe FaceLandmarker wrapper (up to 2 faces) |
+| `face.py` | MediaPipe FaceLandmarker wrapper (up to 4 faces) |
 | `multi.py` | per-hand tracker/gesture slots + per-face slots, position-matched |
 | `blur.py` | PINCH toggle state machine, face-box memory, Gaussian/pixelate blur |
 | `privacy.py` | OFF/FACE_BLUR/STRICT/AUTO controller + auto rules |
