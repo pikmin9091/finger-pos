@@ -127,22 +127,6 @@ needed. FPS counter included. Press `q` to quit. Without a display
 > (same API, enables `imshow`). Headless is fine
 > for JSON-only piping. All inference is CPU-local.
 
-### Phone camera via v4l2loopback
-
-OpenCV opens `/dev/videoN` by its number, so pass it to `--camera`:
-
-```bash
-# terminal 1: feed the phone stream into the loopback device (keep running)
-ffmpeg -i http://192.168.1.71:8080/video \
-        -vf format=yuv420p \
-        -f v4l2 /dev/video10
-# terminal 2: phone cam
-python3 main.py --camera 10 [--control]
-# USB webcam instead (skip /dev/video1 — usually a metadata node, not video)
-python3 main.py --camera 0
-```
-
-Quick device check: `python3 -c "from capture import Camera; c=Camera(10); print(c.read()[0]); c.release()"` → `True` means readable.
 
 ### Static image
 
