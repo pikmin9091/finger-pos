@@ -2,12 +2,14 @@
 
 Separates position calculations from camera capture, MediaPipe detection,
 and visualization. Provides:
-- normalized fingertip coordinates (x, y, z in 0.0-1.0)
+- normalized fingertip coordinates (x, y in 0.0-1.0, z relative depth in meters)
 - position classification (LEFT/CENTER/RIGHT, TOP/CENTER/BOTTOM)
 - hand center from palm landmarks
 - movement tracking with velocity and direction
 - exponential moving average smoothing
 """
+
+import math
 
 TIP_MAP = {
     "thumb_tip": 4,
@@ -23,11 +25,12 @@ class FingerTracker:
     """Tracks finger positions and movement across frames."""
 
     def __init__(self, smoothing=0.2, pos_threshold=0.3, min_velocity=0.01,
-                 reset_after_lost=15):
-        self.smoothing = smoothing          # EMA alpha (0=full smooth, 1=raw)
+                 reset_after_lost=15, max_jump=0.5):
+        self.smoothing = max(0.0, min(1.0, smoothing))  # clamp EMA alpha to valid range
         self.pos_threshold = pos_threshold  # for LEFT/CENTER/RIGHT, TOP/CENTER/BOTTOM
         self.min_velocity = min_velocity    # below this = STATIONARY
         self.reset_after_lost = reset_after_lost  # frames without hand before reset
+        self.max_jump = max_jump  # max normalized (3D) tip displacement per frame
 
         self._smoothed = None       # current smoothed tip positions
         self._prev_smoothed = None  # previous smoothed tip positions
@@ -46,7 +49,7 @@ class FingerTracker:
         Returns:
             dict with hand, confidence, fingers, hand_center, movement
         """
-        if not landmarks:
+        if not landmarks or len(landmarks) < 21:
             self._lost_frames += 1
             # Clear stale smoothed state so a re-detected hand starts fresh
             # instead of lerping from the last known position.
@@ -102,18 +105,31 @@ class FingerTracker:
         }
 
     def _smooth(self, raw_tips):
-        """Exponential moving average smoothing."""
+        """Exponential moving average smoothing with a teleport guard.
+
+        A single-frame displacement larger than max_jump is clamped to
+        max_jump: genuine fast motion still converges within a few frames,
+        while one-frame model spikes barely move the output.
+        """
         if self._smoothed is None:
             return {name: dict(pos) for name, pos in raw_tips.items()}
         alpha = self.smoothing
-        return {
-            name: {
-                "x": alpha * raw_tips[name]["x"] + (1 - alpha) * self._smoothed[name]["x"],
-                "y": alpha * raw_tips[name]["y"] + (1 - alpha) * self._smoothed[name]["y"],
-                "z": alpha * raw_tips[name]["z"] + (1 - alpha) * self._smoothed[name]["z"],
+        out = {}
+        for name, raw in raw_tips.items():
+            prev = self._smoothed[name]
+            dx, dy, dz = raw["x"] - prev["x"], raw["y"] - prev["y"], raw["z"] - prev["z"]
+            dist = math.sqrt(dx * dx + dy * dy + dz * dz)
+            if dist > self.max_jump > 0:
+                scale = self.max_jump / dist
+                raw = {"x": prev["x"] + dx * scale,
+                       "y": prev["y"] + dy * scale,
+                       "z": prev["z"] + dz * scale}
+            out[name] = {
+                "x": alpha * raw["x"] + (1 - alpha) * prev["x"],
+                "y": alpha * raw["y"] + (1 - alpha) * prev["y"],
+                "z": alpha * raw["z"] + (1 - alpha) * prev["z"],
             }
-            for name in raw_tips
-        }
+        return out
 
     def _classify_position(self, x, y):
         """Classify x,y into LEFT/CENTER/RIGHT and TOP/CENTER/BOTTOM."""
@@ -147,6 +163,8 @@ class FingerTracker:
 
         vx = dx / dt
         vy = dy / dt
+
+        self._prev_time = timestamp
 
         if abs(vx) < self.min_velocity and abs(vy) < self.min_velocity:
             direction = "STATIONARY"
