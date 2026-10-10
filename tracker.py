@@ -24,7 +24,7 @@ PALM_INDICES = list(range(10))  # wrist + palm base for center calculation
 class FingerTracker:
     """Tracks finger positions and movement across frames."""
 
-    def __init__(self, smoothing=0.2, pos_threshold=0.3, min_velocity=0.01,
+    def __init__(self, smoothing=0.2, pos_threshold=0.3, min_velocity=0.05,
                  reset_after_lost=15, max_jump=0.5):
         self.smoothing = max(0.0, min(1.0, smoothing))  # clamp EMA alpha to valid range
         self.pos_threshold = pos_threshold  # for LEFT/CENTER/RIGHT, TOP/CENTER/BOTTOM

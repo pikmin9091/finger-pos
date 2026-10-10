@@ -7,42 +7,48 @@ from gesture import GestureDetector, FINGER_JOINTS
 def make_landmarks(extended=None):
     """Create 21 synthetic landmarks matching MediaPipe indices.
 
-    Palm faces camera, fingers point upward (lower y = higher on screen).
-    Extension check: tip.y < pip.y → extended.
-
-    extended: dict {finger_name: True/False}. Defaults to all folded (FIST).
+    Anatomically proportioned (palm length wrist->middle_mcp ~= 0.22):
+    palm faces camera, fingers point upward (lower y = higher on screen).
+    Folded fingers park the tip at its PIP (degenerate, like a real curl);
+    extended fingers point straight up. Folded thumb lies across the palm
+    near the index base (as in a real fist), NOT far from the palm.
     """
     if extended is None:
         extended = {f: False for f in ["thumb", "index", "middle", "ring", "pinky"]}
 
     lm = [
-        {"x": 0.5, "y": 0.50, "z": 0.0},   # 0  wrist
-        {"x": 0.45, "y": 0.55, "z": 0.0},  # 1  thumb_cmc
-        {"x": 0.42, "y": 0.60, "z": 0.0},  # 2  thumb_mcp
-        {"x": 0.38, "y": 0.52, "z": 0.0},  # 3  thumb_ip
-        {"x": 0.38, "y": 0.52, "z": 0.0},  # 4  thumb_tip (folded = at IP)
-        {"x": 0.45, "y": 0.56, "z": 0.0},  # 5  index_mcp
-        {"x": 0.45, "y": 0.40, "z": 0.0},  # 6  index_pip
-        {"x": 0.45, "y": 0.39, "z": 0.0},  # 7  index_dip
-        {"x": 0.45, "y": 0.40, "z": 0.0},  # 8  index_tip (folded)
-        {"x": 0.50, "y": 0.56, "z": 0.0},  # 9  middle_mcp
-        {"x": 0.50, "y": 0.40, "z": 0.0},  # 10 middle_pip
-        {"x": 0.50, "y": 0.39, "z": 0.0},  # 11 middle_dip
-        {"x": 0.50, "y": 0.40, "z": 0.0},  # 12 middle_tip (folded)
-        {"x": 0.55, "y": 0.56, "z": 0.0},  # 13 ring_mcp
-        {"x": 0.55, "y": 0.40, "z": 0.0},  # 14 ring_pip
-        {"x": 0.55, "y": 0.39, "z": 0.0},  # 15 ring_dip
-        {"x": 0.55, "y": 0.40, "z": 0.0},  # 16 ring_tip (folded)
-        {"x": 0.58, "y": 0.56, "z": 0.0},  # 17 pinky_mcp
-        {"x": 0.58, "y": 0.41, "z": 0.0},  # 18 pinky_pip
-        {"x": 0.58, "y": 0.40, "z": 0.0},  # 19 pinky_dip
-        {"x": 0.58, "y": 0.41, "z": 0.0},  # 20 pinky_tip (folded)
+        {"x": 0.50, "y": 0.72, "z": 0.0},   # 0  wrist
+        {"x": 0.46, "y": 0.66, "z": 0.0},   # 1  thumb_cmc
+        {"x": 0.44, "y": 0.60, "z": 0.0},   # 2  thumb_mcp
+        {"x": 0.40, "y": 0.56, "z": 0.0},   # 3  thumb_ip
+        {"x": 0.47, "y": 0.55, "z": 0.0},   # 4  thumb_tip (folded: across palm)
+        {"x": 0.44, "y": 0.50, "z": 0.0},   # 5  index_mcp
+        {"x": 0.44, "y": 0.41, "z": 0.0},   # 6  index_pip
+        {"x": 0.44, "y": 0.34, "z": 0.0},   # 7  index_dip
+        {"x": 0.44, "y": 0.41, "z": 0.0},   # 8  index_tip (folded = at pip)
+        {"x": 0.50, "y": 0.50, "z": 0.0},   # 9  middle_mcp
+        {"x": 0.50, "y": 0.41, "z": 0.0},   # 10 middle_pip
+        {"x": 0.50, "y": 0.34, "z": 0.0},   # 11 middle_dip
+        {"x": 0.50, "y": 0.41, "z": 0.0},   # 12 middle_tip (folded)
+        {"x": 0.56, "y": 0.50, "z": 0.0},   # 13 ring_mcp
+        {"x": 0.56, "y": 0.41, "z": 0.0},   # 14 ring_pip
+        {"x": 0.56, "y": 0.34, "z": 0.0},   # 15 ring_dip
+        {"x": 0.56, "y": 0.41, "z": 0.0},   # 16 ring_tip (folded)
+        {"x": 0.615, "y": 0.52, "z": 0.0},  # 17 pinky_mcp
+        {"x": 0.615, "y": 0.45, "z": 0.0},  # 18 pinky_pip
+        {"x": 0.615, "y": 0.40, "z": 0.0},  # 19 pinky_dip
+        {"x": 0.615, "y": 0.45, "z": 0.0},  # 20 pinky_tip (folded)
     ]
 
+    # Extended fingertips point straight up from their MCPs; the extended
+    # thumb sticks out to the side, away from the palm.
+    ext_tip = {"thumb": (0.30, 0.55), "index": (0.44, 0.26),
+               "middle": (0.50, 0.26), "ring": (0.56, 0.26),
+               "pinky": (0.615, 0.28)}
     tip_map = {"thumb": 4, "index": 8, "middle": 12, "ring": 16, "pinky": 20}
     for fname, is_ext in extended.items():
         if is_ext:
-            lm[tip_map[fname]]["y"] = 0.10
+            lm[tip_map[fname]]["x"], lm[tip_map[fname]]["y"] = ext_tip[fname]
 
     return lm
 

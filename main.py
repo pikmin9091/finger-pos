@@ -10,21 +10,68 @@ import time
 import cv2
 
 from capture import Camera
-from detect import detect_hands
-from face import detect_faces
+from detect import detect_hands, set_confidence as set_hand_conf
+from face import detect_faces, set_confidence as set_face_conf
 from multi import HandSlots, FaceSlots
 from privacy import PrivacyController, MODES, BLUR_KINDS
 from analytics import AnalyticsSession
 from blur import blur_faces
 from control import ControlEngine
 from actions import MediaPlayer, Volume, Hyprland
+from calib import load_calib, save_calib, summarize
 from positions import (draw_landmarks, draw_gesture, draw_status,
                        draw_face_text, draw_blur_status,
-                       draw_box, landmarks_box, UiToasts)
+                       draw_box, landmarks_box, UiToasts, draw_debug,
+                       draw_volume_zone, layout_buttons, hit_test,
+                       draw_buttons, draw_help)
+
+
+def _noop_trackbar(_value):
+    pass
 
 
 def has_display():
     return bool(os.environ.get("DISPLAY") or os.environ.get("WAYLAND_DISPLAY"))
+
+
+def _run_calibrate(cam, per_pose=12, timeout_s=12.0):
+    """Interactive calibration: hold each pose, collect samples, save JSON.
+
+    Only landmark geometry is used — no images are kept. Rejects and
+    reports weak sessions instead of saving bad thresholds.
+    """
+    import time as _t
+    from gesture import GestureDetector
+    from calib import summarize, save_calib
+
+    detector = GestureDetector()  # only for angle/pinch math, no state kept
+    samples = {}
+    for pose, prompt in (("open", "OPEN PALM facing camera, fingers spread"),
+                         ("fist", "FIST, thumb across fingers"),
+                         ("pinch", "PINCH thumb+index tips together")):
+        print(f"Hold {prompt} ...", flush=True)
+        got, t0 = [], _t.time()
+        while len(got) < per_pose and _t.time() - t0 < timeout_s:
+            ret, frame = cam.read()
+            if ret:
+                try:
+                    hands = detect_hands(frame)["hands"]
+                except Exception as e:
+                    print(f"  detector error: {e}", flush=True)
+                    break
+                if hands and len(hands[0]["landmarks"]) >= 21:
+                    got.append(hands[0]["landmarks"])
+            _t.sleep(0.05)
+        samples[pose] = got
+        print(f"  collected {len(got)}/{per_pose} ({pose})", flush=True)
+    calib, warnings = summarize(detector, samples)
+    for w in warnings:
+        print(f"  WARNING: {w}", flush=True)
+    if not calib:
+        print("Calibration REJECTED — keeping previous thresholds.", flush=True)
+        return
+    path = save_calib(calib)
+    print(f"Calibration saved -> {path}: {calib}", flush=True)
 
 
 def _notify(ctrl, toasts, text, timestamp, ttl=2.5, color=(0, 255, 255)):
@@ -60,6 +107,39 @@ def _refresh_status(player, vol, ctrl):
         ctrl["volume_pct"], ctrl["muted"] = None, None
 
 
+def _debug_info(hands, detected, ctrl, engine, timestamp, infer_ms=0.0):
+    """Collect real pipeline values for the debug overlay (never simulated)."""
+    info = {"raw": "-", "final": "NONE", "state": "UNKNOWN", "reason": "-",
+            "bits": "-", "scores": "-", "pinch": "-", "cooldown": "-",
+            "track": f"hands={len(hands)}", "handy": "-", "vol": "-",
+            "thumb": "-", "latency": f"{infer_ms:.1f}ms"}
+    if hands:
+        g = hands[0]["gesture"]
+        sc = g.get("scores", {})
+        bits = "".join("1" if sc.get(f, 0) >= 0.5 else "0"
+                       for f in ("thumb", "index", "middle", "ring", "pinky"))
+        th = g.get("thumb", {})
+        info.update(raw=g.get("raw", "?"), final=g.get("gesture", "?"),
+                    state=g.get("state", "?"), reason=g.get("reason", "?"),
+                    bits=f"T{bits[0]} I{bits[1]} M{bits[2]} R{bits[3]} P{bits[4]}",
+                    scores=" ".join(f"{k[0].upper()}:{sc.get(k, 0):.2f}"
+                                    for k in ("thumb", "index", "middle",
+                                              "ring", "pinky")),
+                    handy=f"y={hands[0]['hand_center']['y']:.3f}",
+                    thumb=f"reach={th.get('reach', '?')} align={th.get('alignment', '?')}")
+        if detected:
+            ratio = _pinch_ratio(detected[0]["landmarks"])
+            info["pinch"] = f"ratio={ratio:.3f}" if ratio is not None else "n/a"
+    if engine is not None:
+        vs = engine.get_volume_status()
+        info["cooldown"] = (f"{engine.cooldown_remaining(timestamp):.1f}s"
+                            + (" VOLMODE" if engine.volume_mode else ""))
+        info["vol"] = (f"{vs['state']} [{engine.vol_top:.2f}-{engine.vol_bottom:.2f}]"
+                       f" tgt={vs['target']}")
+        info["track"] += f" ctrl={'ON' if engine.enabled else 'OFF'}"
+    return info
+
+
 def _fire(action, engine, player, vol, hypr, ctrl, toasts, timestamp):
     """Execute one allowlisted control action. Never raises."""
     from control import ALLOWLIST
@@ -73,7 +153,7 @@ def _fire(action, engine, player, vol, hypr, ctrl, toasts, timestamp):
         kind, val = action
         if kind == "volume_mode":
             _notify(ctrl, toasts,
-                    f"VOLUME MODE {'ON — spread pinch, pinch to lock' if val else 'OFF (locked)'}",
+                    f"VOLUME MODE {'ON — move hand up/down, palm to lock' if val else 'OFF (locked)'}",
                     timestamp)
         elif kind == "volume_set":
             try:
@@ -127,10 +207,24 @@ def main():
                         help="EMA alpha 0.0-1.0: lower = smoother but more lag (default: 0.2)")
     parser.add_argument("--debounce", type=int, default=3,
                         help="frames a new gesture must persist before switching (default: 3)")
-    parser.add_argument("--pinch-threshold", type=float, default=0.06,
-                        help="thumb-index distance for PINCH (default: 0.06)")
+    parser.add_argument("--min-velocity", type=float, default=0.05,
+                        help="units/s below which motion reads STATIONARY "
+                             "(default: 0.05; raise if drift misfires moves)")
+    parser.add_argument("--pinch-threshold", type=float, default=None,
+                        help="hand-size-normalized thumb-index gap for PINCH "
+                             "(default: calib file, else 0.06)")
+    parser.add_argument("--calibrate", action="store_true",
+                        help="interactive threshold calibration, then exit")
+    parser.add_argument("--debug", action="store_true",
+                        help="debug overlay: raw/final gesture, finger bits, "
+                             "pinch, cooldown, tracking state")
     parser.add_argument("--no-face", action="store_true",
                         help="disable face detection (hand tracking only)")
+    parser.add_argument("--sensitivity", default="normal",
+                        choices=["low", "normal", "high"],
+                        help="detection sensitivity: low=0.65 (fewer false "
+                             "positives), normal=0.5, high=0.35 (finds distant "
+                             "hands, more flicker) (default: normal)")
     parser.add_argument("--no-blur", action="store_true",
                         help="disable gesture-controlled face blur")
     parser.add_argument("--blur-cooldown", type=float, default=1.0,
@@ -151,13 +245,35 @@ def main():
                              "(confident held gestures only, no motion) (default: default)")
     parser.add_argument("--no-motion", action="store_true",
                         help="disable motion/swipe triggers in gesture control")
+    parser.add_argument("--vol-top", type=float, default=0.25,
+                        help="hand height (0 top) mapping to volume 100%% "
+                             "(default: 0.25)")
+    parser.add_argument("--vol-bottom", type=float, default=0.75,
+                        help="hand height mapping to volume 0%% (default: 0.75)")
     args = parser.parse_args()
 
-    print("Live AI camera — PINCH toggles privacy | keys: M P C S R Q", flush=True)
+    print("Live AI camera — PINCH toggles privacy | keys: M P B C S R H Q", flush=True)
+    conf = {"low": 0.65, "normal": 0.5, "high": 0.35}[args.sensitivity]
+    set_hand_conf(conf, conf, conf)
+    set_face_conf(conf, conf, conf)
     cam = Camera(args.camera)
+
+    calib = load_calib()
+    if calib:
+        print(f"Calibration loaded: {calib}", flush=True)
+    pinch_thr = (args.pinch_threshold if args.pinch_threshold is not None
+                 else calib.get("pinch_threshold", 0.06))
+
+    if args.calibrate:
+        _run_calibrate(cam)
+        cam.release()
+        return
+
     slots = HandSlots(smoothing=args.smoothing,
-                      pinch_threshold=args.pinch_threshold,
-                      debounce_frames=args.debounce)
+                      pinch_threshold=pinch_thr,
+                      debounce_frames=args.debounce,
+                      calib=calib,
+                      min_velocity=args.min_velocity)
     face_slots = None if args.no_face else FaceSlots()
     face_failed = False
     face_warned = False
@@ -165,7 +281,8 @@ def main():
     from privacy import PrivacyRules
     privacy = PrivacyController(
         mode="OFF" if args.no_blur else args.privacy,
-        rules=PrivacyRules(blur_kind=args.blur_kind,
+        rules=PrivacyRules(auto_on_face=False,
+                           blur_kind=args.blur_kind,
                            strength=args.blur_strength,
                            min_faces=args.auto_faces),
         cooldown=args.blur_cooldown,
@@ -180,6 +297,8 @@ def main():
             engine = ControlEngine(preset="calm")
         else:  # recommended timing: confident + held gestures
             engine = ControlEngine(min_confidence=0.8, dwell=0.7)
+        engine.vol_top = args.vol_top
+        engine.vol_bottom = args.vol_bottom
         if args.no_motion:
             engine.motion = False
     player, vol, hypr = MediaPlayer(), Volume(), Hyprland()
@@ -198,6 +317,12 @@ def main():
 
     fps = 0.0
     _gui_warned = False
+    show_help = False
+    clicks = []  # pending mouse clicks (x, y), consumed in-loop
+    ui_mouse = False
+    ui_trackbars = False
+    ui_inited = False
+    buttons = []  # current-frame button rects for hit-testing
     try:
         while True:
             ret, frame = cam.read()
@@ -223,39 +348,35 @@ def main():
                         face_warned = True
             infer_ms = (time.time() - infer_t0) * 1000.0
 
-            # PINCH routing: volume mode while gesture-control master is ON,
-            # privacy toggle otherwise — never both, no ambiguity.
+            # PINCH owns the privacy toggle whenever gesture-control
+            # master is off (or control is absent). Volume no longer
+            # depends on pinch at all — it uses OPEN_PALM + hand height.
             pinch_now = any(h["gesture"]["gesture"] == "PINCH"
                             and h["gesture"]["stable"] for h in hands)
-            if engine is not None and engine.enabled:
-                ratio = (_pinch_ratio(detected[0]["landmarks"])
-                         if detected else None)
-                primary = hands[0] if hands else None
-                if primary is not None:
-                    g = primary["gesture"]
-                    res = engine.update(g["gesture"], g["confidence"],
-                                        primary["movement"]["direction"],
-                                        timestamp, pinch=pinch_now,
-                                        pinch_ratio=ratio)
+            if engine is not None:
+                if hands:
+                    g = hands[0]["gesture"]
+                    res = engine.update(
+                        g["gesture"], g["confidence"],
+                        hands[0]["movement"]["direction"], timestamp,
+                        hand_y=hands[0]["hand_center"]["y"],
+                        hand_present=True, gesture_stable=g["stable"])
                     if res is not None:
                         _fire(res, engine, player, vol, hypr, ctrl, toasts,
                               timestamp)
+                else:
+                    engine.update(None, 0.0, "STATIONARY", timestamp,
+                                  hand_present=False)
                 if timestamp - ctrl["status_at"] > 2.5:
                     ctrl["status_at"] = timestamp
                     _refresh_status(player, vol, ctrl)
-            else:
-                if engine is not None and hands:
-                    # master OFF: keep gesture state fresh, no firing.
-                    g = hands[0]["gesture"]
-                    engine.update(g["gesture"], g["confidence"],
-                                  hands[0]["movement"]["direction"], timestamp)
-                if not blur_locked_off:
-                    before = privacy.mode
-                    privacy.update_pinch(pinch_now, timestamp)
-                    if privacy.mode != before:
-                        msg = f"Privacy mode -> {privacy.mode}"
-                        toasts.push(msg, (0, 255, 0), timestamp)
-                        print(msg, flush=True)
+            if (engine is None or not engine.enabled) and not blur_locked_off:
+                before = privacy.mode
+                privacy.update_pinch(pinch_now, timestamp)
+                if privacy.mode != before:
+                    msg = f"Privacy mode -> {privacy.mode}"
+                    toasts.push(msg, (0, 255, 0), timestamp)
+                    print(msg, flush=True)
 
             priv = privacy.evaluate(faces, timestamp)
             session.update(hands, faces, infer_ms, fps, timestamp)
@@ -270,9 +391,12 @@ def main():
                                 "reason": priv["reason"]},
                     "analytics": snap}
             if engine is not None:
+                vol_status = engine.get_volume_status()
                 data["control"] = {
                     "enabled": engine.enabled,
                     "volume_mode": engine.volume_mode,
+                    "volume_state": vol_status["state"],
+                    "vol_target": vol_status["target"],
                     "last_action": ctrl["last_action"],
                     "volume_pct": ctrl["volume_pct"],
                     "muted": ctrl["muted"],
@@ -325,12 +449,43 @@ def main():
                     if timestamp < ctrl["notif_until"]:
                         cv2.putText(overlay, ctrl["notif"], (10, 195),
                                     cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0, 255, 255), 2)
+                    if engine.volume_mode or (args.debug and engine is not None):
+                        overlay = draw_volume_zone(
+                            overlay, engine.vol_top, engine.vol_bottom,
+                            hand_y=(hands[0]["hand_center"]["y"] if hands else None))
                     if engine.volume_mode:
-                        cv2.putText(overlay, "VOLUME MODE: spread pinch = louder"
-                                    " (pinch to lock)",
+                        vs = engine.get_volume_status()
+                        actual = (f"{ctrl['volume_pct']}%" if ctrl["volume_pct"]
+                                  is not None else "-")
+                        cv2.putText(overlay,
+                                    f"VOLUME MODE: {vs['state']} target={vs['target']} "
+                                    f"actual={actual}",
                                     (10, 320), cv2.FONT_HERSHEY_SIMPLEX, 0.6,
                                     (0, 165, 255), 2)
                 overlay = toasts.draw(overlay, timestamp)
+                if args.debug:
+                    overlay = draw_debug(overlay, _debug_info(
+                        hands, detected, ctrl, engine, timestamp, infer_ms))
+                # Clickable button bar (labels follow live state).
+                btn_defs = [
+                    (f"PRIV:{privacy.mode}", ord("m")),
+                    (f"BLUR:{privacy.rules.blur_kind}", ord("b")),
+                    (f"CTRL:{'ON' if engine is not None and engine.enabled else 'OFF'}",
+                     ord("c") if engine is not None else None),
+                    ("SNAP", ord("s")),
+                    ("RESET", ord("r")),
+                    ("HELP", ord("h")),
+                    ("QUIT", ord("q")),
+                ]
+                buttons = layout_buttons(overlay.shape[1], overlay.shape[0], btn_defs)
+                active_keys = set()
+                if priv["active"]:
+                    active_keys.add(ord("m"))
+                if engine is not None and engine.enabled:
+                    active_keys.add(ord("c"))
+                overlay = draw_buttons(overlay, buttons, active_keys)
+                if show_help:
+                    overlay = draw_help(overlay)
                 cv2.putText(overlay, f"FPS: {fps:.0f}", (10, 60),
                             cv2.FONT_HERSHEY_SIMPLEX, 0.6, (0, 255, 255), 2)
                 try:
@@ -342,7 +497,45 @@ def main():
                               "continuing JSON-only", flush=True)
                         _gui_warned = True
                 else:
+                    if not ui_inited:
+                        ui_inited = True
+                        try:
+                            cv2.setMouseCallback(
+                                "Finger Detection",
+                                lambda ev, x, y, _f, _p: clicks.append((x, y))
+                                if ev == cv2.EVENT_LBUTTONDOWN else None)
+                            ui_mouse = True
+                        except Exception:
+                            ui_mouse = False
+                        try:
+                            cv2.createTrackbar("smooth", "Finger Detection",
+                                               int(args.smoothing * 100), 100,
+                                               _noop_trackbar)
+                            cv2.createTrackbar("debounce", "Finger Detection",
+                                               args.debounce, 10, _noop_trackbar)
+                            cv2.createTrackbar("strength", "Finger Detection",
+                                               args.blur_strength, 10,
+                                               _noop_trackbar)
+                            ui_trackbars = True
+                        except Exception:
+                            ui_trackbars = False
+                    if ui_trackbars:
+                        try:
+                            slots.set_smoothing(
+                                cv2.getTrackbarPos("smooth", "Finger Detection") / 100.0)
+                            slots.set_debounce(
+                                cv2.getTrackbarPos("debounce", "Finger Detection"))
+                            privacy.rules.strength = max(
+                                1, min(10, cv2.getTrackbarPos(
+                                    "strength", "Finger Detection")))
+                        except Exception:
+                            ui_trackbars = False
                     key = cv2.waitKey(1) & 0xFF
+                    if clicks and buttons:
+                        hit = hit_test(buttons, *clicks.pop(0))
+                        clicks.clear()
+                        if hit is not None:
+                            key = hit
 
             print(json.dumps(data), flush=True)
 
@@ -357,6 +550,12 @@ def main():
                     msg = f"Privacy mode -> {privacy.toggle_mode()}"
                     toasts.push(msg, (0, 255, 0), timestamp)
                     print(msg, flush=True)
+                elif key == ord("b") and not blur_locked_off:
+                    msg = f"Blur kind -> {privacy.cycle_kind()}"
+                    toasts.push(msg, (0, 255, 255), timestamp)
+                    print(msg, flush=True)
+                elif key == ord("h"):
+                    show_help = not show_help
                 elif key == ord("s"):
                     tag = int(time.time())
                     jp = session.export_json(f"analytics_session_{tag}.json")

@@ -33,9 +33,13 @@ def _rss_mb():
 class AnalyticsSession:
     """Accumulates per-frame detection stats for one camera session."""
 
-    def __init__(self, history_len=120, event_limit=200):
+    def __init__(self, history_len=120, event_limit=200, exit_grace=5):
         self.history_len = history_len
         self.event_limit = event_limit
+        # Consecutive missed frames before an exit is emitted. Single-frame
+        # detector gaps must not spam enter/exit pairs (seen in real logs:
+        # 13 pairs in 13.6 s for one face).
+        self.exit_grace = max(1, exit_grace)
         self.reset()
 
     def reset(self):
@@ -88,7 +92,7 @@ class AnalyticsSession:
         for sid, (kind, label) in seen.items():
             if sid not in self.active:
                 self.active[sid] = {"kind": kind, "first": timestamp,
-                                    "frames": 0}
+                                    "frames": 0, "missed": 0}
                 if sid not in self._ever:  # re-entries are not new uniques
                     self._ever[sid] = None
                     if len(self._ever) > 2000:  # flat RAM: forget oldest
@@ -102,13 +106,18 @@ class AnalyticsSession:
                                     "id": sid, "label": label})
             self.active[sid]["frames"] += 1
             self.active[sid]["last"] = timestamp
+            self.active[sid]["missed"] = 0
 
         for sid in [s for s in self.active if s not in seen]:
-            info = self.active.pop(sid)
+            info = self.active[sid]
+            info["missed"] += 1
+            if info["missed"] < self.exit_grace:
+                continue  # probably a brief detection gap, not a real exit
+            self.active.pop(sid)
             self.exited += 1
             self.events.append({"t": round(timestamp, 3), "event": "exit",
                                 "id": sid,
-                                "duration_s": round(timestamp - info["first"], 2),
+                                "duration_s": round(info["last"] - info["first"], 2),
                                 "frames": info["frames"]})
 
     def snapshot(self):

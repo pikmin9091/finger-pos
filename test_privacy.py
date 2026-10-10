@@ -95,3 +95,9 @@ def test_pinch_rising_edge_flips_mode():
     assert p.update_pinch(True, 0.4) == "FACE_BLUR"   # cooldown blocks
     assert p.update_pinch(False, 0.5) == "FACE_BLUR"
     assert p.update_pinch(True, 2.0) == "OFF"         # release+cooldown → flip
+
+
+def test_cycle_kind_toggles_style():
+    p = PrivacyController()
+    assert p.cycle_kind() == "PIXELATE"
+    assert p.cycle_kind() == "GAUSSIAN"

@@ -57,24 +57,61 @@ def _unique_key(base, taken):
 class HandSlots:
     """Maps detected hands to persistent per-hand tracker slots."""
 
-    def __init__(self, smoothing=0.2, pinch_threshold=0.06, debounce_frames=3):
+    def __init__(self, smoothing=0.2, pinch_threshold=0.06, debounce_frames=3,
+                 calib=None, min_velocity=0.05):
         self.smoothing = smoothing
         self.pinch_threshold = pinch_threshold
         self.debounce_frames = debounce_frames
+        self.calib = dict(calib or {})
+        self.min_velocity = min_velocity
         self._slots = []
         self._frame = 0
 
+    def set_smoothing(self, value):
+        """Live-tune EMA alpha on stored default + existing slots."""
+        value = max(0.0, min(1.0, value))
+        self.smoothing = value
+        for s in self._slots:
+            s["tracker"].smoothing = value
+
+    def set_debounce(self, frames):
+        """Live-tune debounce frames on stored default + existing slots."""
+        frames = max(1, int(frames))
+        self.debounce_frames = frames
+        for s in self._slots:
+            s["detector"].debounce_frames = frames
+
     def _make_slot(self, key):
+        detector = GestureDetector(pinch_threshold=self.pinch_threshold,
+                                   debounce_frames=self.debounce_frames)
+        if self.calib:
+            detector.apply_calib(self.calib)
         return {
             "key": key,
             "label": key,
-            "tracker": FingerTracker(smoothing=self.smoothing),
-            "detector": GestureDetector(pinch_threshold=self.pinch_threshold,
-                                        debounce_frames=self.debounce_frames),
+            "votes": [],
+            "tracker": FingerTracker(smoothing=self.smoothing,
+                                       min_velocity=self.min_velocity),
+            "detector": detector,
             "missed": 0,
             "anchor": None,
             "seen": 0,
         }
+
+    @staticmethod
+    def _vote(slot, label):
+        """Majority vote over recent labels; MediaPipe handedness flickers
+        frame-to-frame (seen in real logs: slot id vs reported hand
+        disagreeing), so the raw per-frame label is never trusted alone."""
+        if label is not None:
+            slot["votes"].append(label)
+            del slot["votes"][:-8]
+        if not slot["votes"]:
+            return label
+        counts = {}
+        for v in slot["votes"]:
+            counts[v] = counts.get(v, 0) + 1
+        return max(counts, key=lambda k: (counts[k], -slot["votes"].index(k)))
 
     def _match(self, anchor, label, used):
         # Any previously seen slot is a candidate (not just last frame),
@@ -123,19 +160,20 @@ class HandSlots:
             used.add(id(slot))
             slot["seen"] = self._frame
             slot["missed"] = 0
-            if label is not None:
-                slot["label"] = label
+            voted = self._vote(slot, label)
+            if voted is not None:
+                slot["label"] = voted
             if anchor is not None:
                 slot["anchor"] = anchor
             landmarks = h.get("landmarks") or []
             entry = slot["tracker"].update(
                 landmarks,
-                handedness=h.get("handedness"),
+                handedness=voted,
                 confidence=h.get("confidence", 0.0),
                 timestamp=timestamp,
             )
             entry["gesture"] = slot["detector"].detect(
-                landmarks, handedness=h.get("handedness"))
+                landmarks, handedness=voted)
             entry["id"] = slot["key"]  # stable tracking id for analytics
             entries.append(entry)
 

@@ -19,10 +19,10 @@ def test_open_palm_fires_once_on_edge():
 def test_gesture_change_fires_again_after_cooldown():
     e = eng()
     e.update("THUMBS_UP", 0.9, "STATIONARY", 0.0)
-    e.update("OPEN_PALM", 0.9, "STATIONARY", 0.2)  # toggles master OFF
+    e.update("THUMBS_DOWN", 0.9, "STATIONARY", 0.2)  # toggles master OFF
     assert e.enabled is False
     e.update("NONE", 0.0, "STATIONARY", 0.5)  # release
-    assert e.update("OPEN_PALM", 0.9, "STATIONARY", 2.0) == "control_toggle"
+    assert e.update("THUMBS_DOWN", 0.9, "STATIONARY", 2.0) == "control_toggle"
     assert e.enabled is True
 
 
@@ -32,13 +32,18 @@ def test_master_off_blocks_all():
     assert e.update("POINT", 0.9, "RIGHT", 0.1) is None
 
 
-def test_fist_toggles_master():
-    e = eng(enabled=True)
+def test_palm_enables_thumbs_disables_master():
+    e = eng(enabled=False)
     assert e.update("OPEN_PALM", 0.9, "STATIONARY", 0.0) == "control_toggle"
-    assert e.enabled is False
-    e.update("NONE", 0.0, "STATIONARY", 1.0)  # release
-    assert e.update("OPEN_PALM", 0.9, "STATIONARY", 2.0) == "control_toggle"
     assert e.enabled is True
+    e.update("NONE", 0.0, "STATIONARY", 1.0)  # release
+    # palm while ON enters volume mode instead of disabling (hand_y None ok)
+    assert e.update("OPEN_PALM", 0.9, "STATIONARY", 2.0) == ("volume_mode", True)
+    assert e.enabled is True and e.volume_mode is True
+    e.update("NONE", 0.0, "STATIONARY", 3.0)
+    # thumbs-down toggles the master off (and kills volume mode)
+    assert e.update("THUMBS_DOWN", 0.9, "STATIONARY", 4.0) == "control_toggle"
+    assert e.enabled is False and e.volume_mode is False
 
 
 MOTION_MAP = {"MOVE_RIGHT": "media_next", "MOVE_LEFT": "media_previous",
@@ -54,11 +59,14 @@ def test_move_transition_fires_no_repeat():
 
 
 def test_volume_ramps_while_sustained():
-    e = eng(volume_interval=0.5, action_map=MOTION_MAP)
+    # Repeat-kind was removed: one command per continuous movement.
+    # Sustained motion in the same direction never refires.
+    e = eng(action_map=MOTION_MAP)
     assert e.update("NONE", 0.0, "UP", 0.0) == "volume_up"   # transition
-    assert e.update("NONE", 0.0, "UP", 0.2) is None           # too soon
-    assert e.update("NONE", 0.0, "UP", 0.6) == "volume_up"    # interval elapsed
-    assert e.update("NONE", 0.0, "STATIONARY", 1.2) is None
+    assert e.update("NONE", 0.0, "UP", 0.2) is None
+    assert e.update("NONE", 0.0, "UP", 5.0) is None
+    e.update("NONE", 0.0, "STATIONARY", 6.0)  # pause re-arms
+    assert e.update("NONE", 0.0, "UP", 7.0) == "volume_up"
 
 
 def test_low_confidence_blocked():
@@ -106,43 +114,81 @@ def test_neutral_other_gesture_clears():
     assert e.update("THUMBS_UP", 0.9, "STATIONARY", 4.0) == "media_play_pause"
 
 
-def test_pinch_toggles_volume_mode():
-    e = eng()
+def test_palm_enters_and_exits_volume_mode():
+    e = eng()  # enabled
+    assert e.volume_state == "INACTIVE"
+    assert e.update("OPEN_PALM", 0.9, "STATIONARY", 0.0) == ("volume_mode", True)
+    assert e.volume_state == "ACTIVE"
+    e.update("NONE", 0.0, "STATIONARY", 1.0)  # release palm
+    assert e.update("OPEN_PALM", 0.9, "STATIONARY", 2.0) == ("volume_mode", False)
     assert e.volume_mode is False
-    assert e.update("NONE", 0.0, "STATIONARY", 0.0, pinch=True) == ("volume_mode", True)
-    assert e.update("NONE", 0.0, "STATIONARY", 0.1, pinch=True) is None  # held
-    e.update("NONE", 0.0, "STATIONARY", 0.2, pinch=False)  # release
-    assert e.update("NONE", 0.0, "STATIONARY", 0.3, pinch=True) == ("volume_mode", False)
+    assert e.enabled is True  # master untouched by volume lock
+    assert e.get_volume_status()["state"] in ("LOCKING", "INACTIVE")
 
 
-def test_pinch_ignored_when_master_off():
+def test_palm_enables_master_but_not_volume():
     e = eng(enabled=False)
-    assert e.update("NONE", 0.0, "STATIONARY", 0.0, pinch=True) is None
-    assert e.volume_mode is False
+    assert e.update("OPEN_PALM", 0.9, "STATIONARY", 0.0) == "control_toggle"
+    assert e.enabled is True and e.volume_mode is False
 
 
-def test_volume_adjust_deadzone_smooth_throttle():
-    e = eng(dwell=0.0)
-    e.update("NONE", 0.0, "STATIONARY", 0.0, pinch=True)  # enter
-    assert e.volume_mode is True
-    first = e.update("NONE", 0.0, "STATIONARY", 0.1, pinch_ratio=0.5)
-    assert first[0] == "volume_set"  # first ratio seeds + sends
-    pct0 = first[1]
-    # tiny jitter inside deadzone band → no new target
-    assert e.update("NONE", 0.0, "STATIONARY", 0.6, pinch_ratio=0.5) is None
-    # big spread → new target after throttle window
-    big = e.update("NONE", 0.0, "STATIONARY", 1.2, pinch_ratio=0.9)
-    assert big[0] == "volume_set" and big[1] > pct0
-
-
-def test_volume_mode_suppresses_discrete():
+def test_height_up_raises_down_lowers():
     e = eng()
-    e.update("NONE", 0.0, "STATIONARY", 0.0, pinch=True)
-    # thumbs up while adjusting → swallowed, volume mode stays
-    r = e.update("THUMBS_UP", 0.9, "STATIONARY", 0.5, pinch_ratio=0.5)
-    assert r is None or (isinstance(r, tuple) and r[0] == "volume_set")
-    assert r != "media_play_pause"
-    assert e.volume_mode is True
+    e.update("OPEN_PALM", 0.9, "STATIONARY", 0.0, hand_y=0.5)
+    seen, t = [], 0.5
+    for _ in range(8):  # hold hand high: targets climb toward 100
+        r = e.update("NONE", 0.0, "STATIONARY", t, hand_y=0.25)
+        t += 0.5
+        if r:
+            seen.append(r[1])
+    assert seen and seen == sorted(seen) and seen[-1] >= 90
+    seen, t = [], t
+    for _ in range(8):  # then low: targets fall toward 0
+        r = e.update("NONE", 0.0, "STATIONARY", t, hand_y=0.75)
+        t += 0.5
+        if r:
+            seen.append(r[1])
+    assert seen and seen == sorted(seen, reverse=True) and seen[-1] <= 10
+
+
+def test_still_hand_sends_nothing_more():
+    e = eng()
+    e.update("OPEN_PALM", 0.9, "STATIONARY", 0.0, hand_y=0.5)
+    e.update("NONE", 0.0, "STATIONARY", 0.5, hand_y=0.5)
+    assert e.update("NONE", 0.0, "STATIONARY", 1.0, hand_y=0.5) is None
+    assert e.update("NONE", 0.0, "STATIONARY", 5.0, hand_y=0.5) is None
+
+
+def test_tracking_lost_pauses_never_zeroes():
+    e = eng()
+    e.update("OPEN_PALM", 0.9, "STATIONARY", 0.0, hand_y=0.5)
+    assert e.update("NONE", 0.0, "STATIONARY", 0.1,
+                    hand_present=False) is None
+    assert e.get_volume_status()["state"] == "TRACKING_LOST"
+    # hand returns elsewhere: no jump-send, resumes smoothly
+    assert e.update("NONE", 0.0, "STATIONARY", 0.2, hand_y=0.9) is None
+    assert e.get_volume_status()["state"] == "ACTIVE"
+
+
+def test_volume_clamped_to_valid_range():
+    e = eng(vol_top=0.4, vol_bottom=0.6)
+    e.update("OPEN_PALM", 0.9, "STATIONARY", 0.0, hand_y=0.5)
+    assert e.update("NONE", 0.0, "STATIONARY", 0.5, hand_y=0.0) == ("volume_set", 100)
+    r = None
+    for i in range(6):  # converges, then clamps exactly at 0
+        r = e.update("NONE", 0.0, "STATIONARY", 1.0 + i * 0.5, hand_y=1.0)
+        if r == ("volume_set", 0):
+            break
+    assert r == ("volume_set", 0)
+
+
+def test_no_volume_when_inactive():
+    e = eng()
+    # never entered: height motion alone changes nothing
+    assert e.update("NONE", 0.0, "STATIONARY", 0.0, hand_y=0.1) is None
+    assert e.get_volume_status() == {"state": "INACTIVE", "target": None,
+                                     "top": 0.25, "bottom": 0.75,
+                                     "deadband": 0.008}
 
 
 def test_dwell_requires_hold():

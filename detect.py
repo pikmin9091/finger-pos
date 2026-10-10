@@ -14,16 +14,42 @@ _MODEL_PATH = os.path.join(os.path.dirname(os.path.abspath(__file__)),
 # VIDEO mode enables the model's internal temporal tracking: landmarks
 # are propagated frame-to-frame instead of redetected from scratch,
 # which removes most per-frame flicker on live streams.
-_landmarker = vision.HandLandmarker.create_from_options(
-    vision.HandLandmarkerOptions(
-        base_options=BaseOptions(model_asset_path=_MODEL_PATH),
-        running_mode=vision.RunningMode.VIDEO,
-        num_hands=MAX_HANDS,
-        min_hand_detection_confidence=0.5,
-        min_hand_presence_confidence=0.5,
-        min_tracking_confidence=0.5,
-    )
-)
+_landmarkers = {}
+
+
+def _get_landmarker(det=0.5, presence=0.5, track=0.5):
+    """Lazy singleton per confidence triple (also survives a missing model
+    until first use with a clear error instead of an import crash)."""
+    key = (det, presence, track)
+    if key not in _landmarkers:
+        if not os.path.exists(_MODEL_PATH):
+            raise FileNotFoundError(
+                f"hand model not found: {_MODEL_PATH} "
+                "(download from https://developers.google.com/mediapipe/solutions/vision/hand_landmarker)")
+        _landmarkers[key] = vision.HandLandmarker.create_from_options(
+            vision.HandLandmarkerOptions(
+                base_options=BaseOptions(model_asset_path=_MODEL_PATH),
+                running_mode=vision.RunningMode.VIDEO,
+                num_hands=MAX_HANDS,
+                min_hand_detection_confidence=det,
+                min_hand_presence_confidence=presence,
+                min_tracking_confidence=track,
+            )
+        )
+    return _landmarkers[key]
+
+
+def set_confidence(det=0.5, presence=0.5, track=0.5):
+    """Select the active confidence triple. Returns it (clamped 0-1)."""
+    det = max(0.0, min(1.0, det))
+    presence = max(0.0, min(1.0, presence))
+    track = max(0.0, min(1.0, track))
+    global _active_conf
+    _active_conf = (det, presence, track)
+    return _active_conf
+
+
+_active_conf = (0.5, 0.5, 0.5)
 
 _last_ts = 0
 
@@ -53,7 +79,8 @@ def detect_hands(frame):
     if frame.ndim == 3 and frame.shape[2] == 3:
         frame = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
     mp_image = mp.Image(image_format=mp.ImageFormat.SRGB, data=frame)
-    result = _landmarker.detect_for_video(mp_image, _next_timestamp_ms())
+    result = _get_landmarker(*_active_conf).detect_for_video(
+        mp_image, _next_timestamp_ms())
     hands = []
     if result.hand_landmarks:
         handed = result.handedness or []

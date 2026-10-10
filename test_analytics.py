@@ -40,22 +40,40 @@ def test_counts_and_confidence_from_real_entries():
 
 
 def test_enter_exit_events_with_duration():
-    s = AnalyticsSession()
+    s = AnalyticsSession(exit_grace=5)
     s.update([hand("Right")], [], 1.0, 30.0, timestamp=10.0)
     s.update([hand("Right")], [], 1.0, 30.0, timestamp=11.0)
-    s.update([], [], 1.0, 30.0, timestamp=13.0)  # exit
+    for t in (12.0, 13.0, 14.0, 15.0):
+        s.update([], [], 1.0, 30.0, timestamp=t)
+        assert "exit" not in [e["event"] for e in s.events]  # grace holds
+    assert s.snapshot()["active"] == 1  # still counted during grace
+    s.update([], [], 1.0, 30.0, timestamp=16.0)  # 5th miss -> exit
     kinds = [e["event"] for e in s.events]
     assert kinds == ["enter", "exit"]
-    assert s.events[-1]["duration_s"] == pytest.approx(3.0)
+    assert s.events[-1]["duration_s"] == pytest.approx(1.0)  # last-first seen
     assert s.events[-1]["frames"] == 2
     assert s.snapshot()["active"] == 0
 
 
+def test_brief_gap_emits_no_events():
+    # The real-log case: 1-2 frame detection gaps must not spam pairs.
+    s = AnalyticsSession(exit_grace=5)
+    s.update([hand("Right")], [], 1.0, 30.0, timestamp=0.0)
+    s.update([], [], 1.0, 30.0, timestamp=0.1)
+    s.update([], [], 1.0, 30.0, timestamp=0.2)
+    s.update([hand("Right")], [], 1.0, 30.0, timestamp=0.3)
+    snap = s.snapshot()
+    assert [e["event"] for e in s.events] == ["enter"]
+    assert snap["entered"] == 1 and snap["exited"] == 0
+    assert snap["unique_hands"] == 1
+
+
 def test_reentry_not_double_unique_but_counts_entered():
-    s = AnalyticsSession()
+    s = AnalyticsSession(exit_grace=2)
     s.update([hand("Right")], [], 1.0, 30.0, timestamp=0.0)
     s.update([], [], 1.0, 30.0, timestamp=1.0)
-    s.update([hand("Right")], [], 1.0, 30.0, timestamp=2.0)
+    s.update([], [], 1.0, 30.0, timestamp=2.0)  # grace exceeded -> exit
+    s.update([hand("Right")], [], 1.0, 30.0, timestamp=3.0)
     snap = s.snapshot()
     assert snap["unique_hands"] == 1   # same id → not new
     assert snap["entered"] == 2 and snap["exited"] == 1
@@ -79,15 +97,16 @@ def test_reset_clears():
 
 
 def test_export_roundtrip(tmp_path):
-    s = AnalyticsSession()
+    s = AnalyticsSession(exit_grace=2)
     s.update([hand()], [face()], 4.0, 25.0, timestamp=7.0)
     s.update([], [], 4.0, 25.0, timestamp=8.0)
+    s.update([], [], 4.0, 25.0, timestamp=9.0)  # grace exceeded -> exits
     jp = s.export_json(str(tmp_path / "s.json"))
     cp = s.export_csv(str(tmp_path / "s.csv"))
     data = json.loads(open(jp).read())
-    assert data["snapshot"]["frames"] == 2
+    assert data["snapshot"]["frames"] == 3
     assert len(data["events"]) == 4  # 2 enters + 2 exits
     rows = list(csv.reader(open(cp)))
     assert rows[0] == ["timestamp", "hands", "faces"]
-    assert len(rows) == 3  # header + 2 frames
+    assert len(rows) == 4  # header + 3 frames
     assert rows[1][1:] == ["1", "1"]

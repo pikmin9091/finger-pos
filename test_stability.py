@@ -87,15 +87,17 @@ def _pinch_lm(dist):
 
 
 def test_pinch_holds_inside_exit_band():
+    # Distances are raw; the detector rescales by hand size (here 0.22),
+    # so raw 0.11 -> 0.075 normalized: inside the (0.06, 0.09) band.
     d = GestureDetector(pinch_threshold=0.06, debounce_frames=1)
     assert d.detect(_pinch_lm(0.05))["gesture"] == "PINCH"   # enter
-    assert d.detect(_pinch_lm(0.08))["gesture"] == "PINCH"   # 0.08 < 0.09 exit
+    assert d.detect(_pinch_lm(0.11))["gesture"] == "PINCH"   # hold in band
     assert d.detect(_pinch_lm(0.20))["gesture"] != "PINCH"   # beyond exit band
 
 
 def test_pinch_does_not_enter_inside_exit_band():
     d = GestureDetector(pinch_threshold=0.06, debounce_frames=1)
-    assert d.detect(_pinch_lm(0.08))["gesture"] != "PINCH"   # 0.08 > 0.06 enter
+    assert d.detect(_pinch_lm(0.11))["gesture"] != "PINCH"   # norm 0.075 > 0.06 enter
 
 
 # ── Smoothing convergence ────────────────────────────────────────

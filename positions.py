@@ -68,6 +68,34 @@ def draw_face_text(frame, face_data, y=90):
     cv2.putText(frame, text, (10, y), cv2.FONT_HERSHEY_SIMPLEX, 0.6, (255, 255, 255), 2)
     return frame
 
+def draw_debug(frame, info, y0=345):
+    """Debug panel: raw/final gesture, finger bits+scores, pinch, state.
+
+    info keys: raw, final, state, reason, bits (str like 'TIMRP 10110'),
+    scores (str), pinch (str), cooldown (str), track (str). All real data
+    passed in by the caller — never simulated.
+    """
+    lines = [
+        f"RAW:{info.get('raw', '?')} FINAL:{info.get('final', '?')} "
+        f"[{info.get('state', '?')}] why:{info.get('reason', '?')}",
+        f"FINGERS:{info.get('bits', '?')} SCORES:{info.get('scores', '?')}",
+        f"PINCH:{info.get('pinch', '?')} COOLDOWN:{info.get('cooldown', '?')} "
+        f"TRACK:{info.get('track', '?')}",
+        f"HAND:{info.get('handy', '-')} THUMB:{info.get('thumb', '-')} "
+        f"LAT:{info.get('latency', '-')}",
+        f"VOL:{info.get('vol', '-')}",
+    ]
+    h, w = frame.shape[:2]
+    for i, line in enumerate(lines):
+        y = y0 + i * 20
+        if y >= h - 4:
+            break
+        (tw, _), _ = cv2.getTextSize(line, cv2.FONT_HERSHEY_SIMPLEX, 0.45, 1)
+        cv2.rectangle(frame, (6, y - 14), (min(w - 6, 12 + tw), y + 4), (0, 0, 0), -1)
+        cv2.putText(frame, line, (10, y), cv2.FONT_HERSHEY_SIMPLEX, 0.45,
+                    (0, 255, 255), 1)
+    return frame
+
 class UiToasts:
     """Expiring on-screen text messages for the camera window.
 
@@ -107,6 +135,25 @@ def landmarks_box(landmarks, pad=0.02):
     return {"x_min": max(0.0, min(xs) - pad), "y_min": max(0.0, min(ys) - pad),
             "x_max": min(1.0, max(xs) + pad), "y_max": min(1.0, max(ys) + pad)}
 
+def draw_volume_zone(frame, top, bottom, hand_y=None):
+    """Volume calibration markers: MIN (100%) and MAX (0%) heights.
+
+    Drawn while volume mode is active (or debug on) so the user sees
+    when height control is live and where the calibrated range sits.
+    """
+    h, w = frame.shape[:2]
+    y_top, y_bot = int(top * h), int(bottom * h)
+    cv2.line(frame, (w - 40, y_top), (w - 10, y_top), (0, 165, 255), 2)
+    cv2.line(frame, (w - 40, y_bot), (w - 10, y_bot), (0, 165, 255), 2)
+    cv2.putText(frame, "100", (w - 70, y_top + 4),
+                cv2.FONT_HERSHEY_SIMPLEX, 0.4, (0, 165, 255), 1)
+    cv2.putText(frame, "0", (w - 70, y_bot + 4),
+                cv2.FONT_HERSHEY_SIMPLEX, 0.4, (0, 165, 255), 1)
+    if hand_y is not None:
+        yh = int(max(0.0, min(1.0, hand_y)) * h)
+        cv2.circle(frame, (w - 25, yh), 5, (0, 255, 0), -1)
+    return frame
+
 def draw_box(frame, box, color=(0, 255, 0), label=None):
     """Plain thin box + small label. Coordinates follow the real frame size."""
     if not box:
@@ -122,4 +169,72 @@ def draw_box(frame, box, color=(0, 255, 0), label=None):
     if label:
         cv2.putText(frame, str(label)[:32], (x1, max(12, y1 - 6)),
                     cv2.FONT_HERSHEY_SIMPLEX, 0.45, color, 1)
+    return frame
+
+# Clickable button bar (text UI stays clickable via mouse).
+# Each entry: (label, key-code or None). Layout is pure (testable headless).
+BUTTON_H = 26
+BUTTON_GAP = 6
+
+
+def layout_buttons(frame_w, frame_h, buttons):
+    """Bottom-bar button rects for the current frame size.
+
+    Returns [(x1, y1, x2, y2, label, key), ...]. Pure function.
+    """
+    n = max(1, len(buttons))
+    avail = frame_w - BUTTON_GAP * (n + 1)
+    bw = max(40, avail // n)
+    y1 = frame_h - BUTTON_H - 4
+    y2 = frame_h - 4
+    rects = []
+    for i, (label, key) in enumerate(buttons):
+        x1 = BUTTON_GAP + i * (bw + BUTTON_GAP)
+        x2 = min(frame_w - BUTTON_GAP, x1 + bw)
+        rects.append((x1, y1, x2, y2, label, key))
+    return rects
+
+
+def hit_test(rects, x, y):
+    """Return the key of the button under (x, y), or None. Pure function."""
+    for (x1, y1, x2, y2, _label, key) in rects:
+        if x1 <= x <= x2 and y1 <= y <= y2 and key is not None:
+            return key
+    return None
+
+
+def draw_buttons(frame, rects, active=()):
+    """Draw button bar; `active` = set of highlighted keys."""
+    active = set(active or ())
+    for (x1, y1, x2, y2, label, key) in rects:
+        color = (0, 255, 0) if key in active else (200, 200, 200)
+        cv2.rectangle(frame, (x1, y1), (x2, y2), (20, 20, 20), -1)
+        cv2.rectangle(frame, (x1, y1), (x2, y2), color, 1)
+        cv2.putText(frame, label[:18], (x1 + 6, y1 + 17),
+                    cv2.FONT_HERSHEY_SIMPLEX, 0.45, color, 1)
+    return frame
+
+
+HELP_LINES = [
+    "KEYS  q quit | m privacy | p blur-toggle | b blur-kind | c control",
+    "      s export | r reset | h help | click buttons below",
+    "GESTURES  palm=master/volume | thumbs-up=play | V=next | fist=prev",
+    "      index=mute | thumbs-down=master | pinch=privacy(when ctrl OFF)",
+    "SLIDERS  smooth / debounce / strength (live tuning)",
+]
+
+
+def draw_help(frame, lines=None):
+    """Multi-line help panel, toggled by 'h'. Pure drawing."""
+    h, w = frame.shape[:2]
+    lines = lines or HELP_LINES
+    y0 = 200
+    for i, line in enumerate(lines):
+        y = y0 + i * 22
+        if y >= h - 40:
+            break
+        (tw, _), _ = cv2.getTextSize(line, cv2.FONT_HERSHEY_SIMPLEX, 0.45, 1)
+        cv2.rectangle(frame, (8, y - 15), (16 + tw, y + 5), (0, 0, 0), -1)
+        cv2.putText(frame, line, (10, y), cv2.FONT_HERSHEY_SIMPLEX, 0.45,
+                    (255, 255, 0), 1)
     return frame

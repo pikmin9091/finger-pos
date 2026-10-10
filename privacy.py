@@ -62,6 +62,12 @@ class PrivacyController:
             self.last_blur_mode = self.mode
         return self.mode
 
+    def cycle_kind(self):
+        """GAUSSIAN ↔ PIXELATE."""
+        kinds = list(BLUR_KINDS)
+        self.rules.blur_kind = kinds[(kinds.index(self.rules.blur_kind) + 1) % len(kinds)]
+        return self.rules.blur_kind
+
     def update_pinch(self, is_pinch, timestamp):
         """Feed stable-PINCH state; flips OFF <-> blur mode on rising edge."""
         was = self.toggle.enabled

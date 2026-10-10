@@ -11,7 +11,8 @@ MAX_FACES = 4
 _MODEL_PATH = os.path.join(os.path.dirname(os.path.abspath(__file__)),
                            "face_landmarker.task")
 
-_landmarker = None
+_landmarkers = {}
+_active_conf = (0.5, 0.5, 0.5)
 _last_ts = 0
 
 
@@ -23,26 +24,35 @@ def _next_timestamp_ms():
     return _last_ts
 
 
-def _get_landmarker():
-    """Lazy singleton so importing this module never crashes when the
-    model file is missing — the error only surfaces on first use."""
-    global _landmarker
-    if _landmarker is None:
+def _get_landmarker(det=0.5, presence=0.5, track=0.5):
+    """Lazy singleton per confidence triple so importing this module never
+    crashes when the model file is missing — the error only surfaces on
+    first use."""
+    key = (det, presence, track)
+    if key not in _landmarkers:
         if not os.path.exists(_MODEL_PATH):
             raise FileNotFoundError(
                 f"face model not found: {_MODEL_PATH} "
                 "(download from https://developers.google.com/mediapipe/solutions/vision/face_landmarker)")
-        _landmarker = vision.FaceLandmarker.create_from_options(
+        _landmarkers[key] = vision.FaceLandmarker.create_from_options(
             vision.FaceLandmarkerOptions(
                 base_options=BaseOptions(model_asset_path=_MODEL_PATH),
                 running_mode=vision.RunningMode.VIDEO,
                 num_faces=MAX_FACES,
-                min_face_detection_confidence=0.5,
-                min_face_presence_confidence=0.5,
-                min_tracking_confidence=0.5,
+                min_face_detection_confidence=det,
+                min_face_presence_confidence=presence,
+                min_tracking_confidence=track,
             )
         )
-    return _landmarker
+    return _landmarkers[key]
+
+
+def set_confidence(det=0.5, presence=0.5, track=0.5):
+    """Select the active confidence triple. Returns it (clamped 0-1)."""
+    global _active_conf
+    _active_conf = (max(0.0, min(1.0, det)), max(0.0, min(1.0, presence)),
+                    max(0.0, min(1.0, track)))
+    return _active_conf
 
 
 def detect_faces(frame):
@@ -57,7 +67,7 @@ def detect_faces(frame):
     if frame.ndim == 3 and frame.shape[2] == 3:
         frame = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
     mp_image = mp.Image(image_format=mp.ImageFormat.SRGB, data=frame)
-    result = _get_landmarker().detect_for_video(mp_image, _next_timestamp_ms())
+    result = _get_landmarker(*_active_conf).detect_for_video(mp_image, _next_timestamp_ms())
     faces = [{"landmarks": [{"x": lm.x, "y": lm.y, "z": lm.z} for lm in face],
               "confidence": 1.0}
              for face in (result.face_landmarks or [])[:MAX_FACES]]

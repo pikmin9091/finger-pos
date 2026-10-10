@@ -281,3 +281,22 @@ def test_no_hand_landmarks_empty():
     tracker = FingerTracker()
     result = tracker.update([], timestamp=0.0)
     assert result["movement"]["direction"] == "STATIONARY"
+
+def test_slow_drift_is_stationary_default():
+    from tracker import FingerTracker
+    t = FingerTracker(smoothing=1.0)  # default min_velocity=0.05
+    base = [{"x": 0.5, "y": 0.5, "z": 0.0, "visibility": 1.0} for _ in range(21)]
+    t.update(base, timestamp=0.0)
+    drift = [dict(p, x=p["x"] + (0.004 if i == 8 else 0.0)) for i, p in enumerate(base)]
+    r = t.update(drift, timestamp=0.1)  # 0.04 u/s < 0.05
+    assert r["movement"]["direction"] == "STATIONARY"
+
+
+def test_min_velocity_tunable():
+    from tracker import FingerTracker
+    t = FingerTracker(smoothing=1.0, min_velocity=0.01)
+    base = [{"x": 0.5, "y": 0.5, "z": 0.0, "visibility": 1.0} for _ in range(21)]
+    t.update(base, timestamp=0.0)
+    drift = [dict(p, x=p["x"] + (0.004 if i == 8 else 0.0)) for i, p in enumerate(base)]
+    r = t.update(drift, timestamp=0.1)  # 0.04 u/s > 0.01
+    assert r["movement"]["direction"] == "RIGHT"

@@ -1,3 +1,6 @@
 __pycache__/
 .pytest_cache/
 *.pyc
+myenv/
+analytics_session_*.json
+analytics_session_*.csv

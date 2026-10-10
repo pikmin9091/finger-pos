@@ -6,6 +6,7 @@ from face import detect_faces
 from face_tracker import FaceTracker
 from multi import HandSlots
 from blur import blur_faces
+from calib import load_calib
 from positions import get_finger_tips
 
 parser = argparse.ArgumentParser(description="Static image hand + face report")
@@ -14,6 +15,8 @@ parser.add_argument("--blur", action="store_true",
                     help="apply face blur to the preview")
 parser.add_argument("--out", default=None,
                     help="save annotated preview to this path (nothing saved by default)")
+parser.add_argument("--debug", action="store_true",
+                    help="print raw classifier internals (scores, state, reason)")
 args = parser.parse_args()
 
 frame = cv2.imread(args.image)
@@ -22,7 +25,10 @@ if frame is None:
     sys.exit(1)
 
 hands = detect_hands(frame)["hands"]
-slots = HandSlots(debounce_frames=1)  # immediate gesture for single images
+calib = load_calib()
+if calib:
+    print(f"Calibration: {calib}")
+slots = HandSlots(debounce_frames=1, calib=calib)  # immediate gesture for single images
 entries = slots.update(hands, timestamp=0.0)
 print(f"Hands: {len(entries)}")
 for n, (h, e) in enumerate(zip(hands, entries)):
@@ -32,6 +38,9 @@ for n, (h, e) in enumerate(zip(hands, entries)):
     print(f"Hand {n}: {h['handedness']} (conf={h['confidence']:.2f}) "
           f"gesture={g['gesture']} (conf={g['confidence']:.2f} stable={g['stable']}) "
           f"{'<-- blur toggle gesture' if pinch else ''}")
+    if args.debug:
+        print(f"  raw={g.get('raw')} state={g.get('state')} reason={g.get('reason')} "
+              f"scores={g.get('scores')}")
     for i, t in enumerate(tips or []):
         print(f"  finger {i}: x={t['x']:.3f} y={t['y']:.3f} conf={t['conf']:.2f}")
 
