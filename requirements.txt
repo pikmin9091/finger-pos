@@ -6,3 +6,6 @@ numpy>=2.0
 fastapi>=0.115
 uvicorn[standard]>=0.30
 httpx>=0.27  # test client only
+# ML training + optional ML inference (install inside the repo venv,
+# never system-wide). The deterministic classifier needs none of this.
+scikit-learn>=1.3

@@ -311,6 +311,25 @@ Current synthetic result: **90/90 correct, 10/10 ambiguous rejected,
 ~2 frames to confirm**. This measures geometric robustness, NOT camera
 accuracy — do not quote it as product accuracy.
 
+### ML training (Tahap B infra; product model needs your recordings)
+
+```bash
+./myenv/bin/pip install scikit-learn          # once, venv only
+./myenv/bin/python collect.py --label OPEN_PALM --camera 0   # one session per run
+# ... repeat per label, several sessions each: vary distance (0.4–1.2 m),
+# roll (±45°), lighting, speed. SPACE records, Q saves to data/sessions/.
+./myenv/bin/python train_model.py --data data/sessions --out models/gesture_rf.joblib
+./myenv/bin/python evaluate_model.py --model models/gesture_rf.joblib --data data/holdout --baseline
+```
+
+Rules: landmarks only (never video); train/test split is BY SESSION
+(one file per run — adjacent frames must never leak across the split);
+`evaluate_model.py` warns on session overlap, audits OPEN_PALM false
+positives (phantom privacy flips), and benches latency. Smoke-test the
+plumbing without a camera via `--synthetic` (geometric bootstrap, clearly
+labeled NOT a product model). Live-loop integration lands in Tahap E —
+nothing above changes current behavior.
+
 Manual protocol (required before trusting a new gesture mapping): in varied
 lighting, distances (0.4–1.2 m), both hands, and ±45° roll, hold each
 gesture 3 s and log raw/final from `--debug`; count correct frames. A
@@ -427,7 +446,7 @@ Six layers keep the output steady on live video:
 python3 -m pytest
 ```
 
-225 unit tests (synthetic landmarks + mocked action runner, no webcam/hardware needed).
+235 unit tests (synthetic landmarks + mocked action runner, no webcam/hardware needed).
 
 ## Project structure
 
@@ -449,6 +468,11 @@ python3 -m pytest
 | `calib.py` | per-user threshold calibration (JSON, landmarks only) |
 | `eval_gestures.py` | synthetic robustness eval: accuracy, confusion, latency |
 | `tracker.py` | fingertip positions, smoothing, movement |
+| `features.py` | versioned ML feature extraction (train/infer parity, 75 floats) |
+| `ml_model.py` | model save/load/predict with version gate + UNKNOWN fallback |
+| `collect.py` | landmark session recorder (one label per run, JSONL, no video) |
+| `train_model.py` | session-split training: RF/MLP, mirror augmentation, metrics |
+| `evaluate_model.py` | holdout eval vs deterministic baseline, latency bench, palm-FP audit |
 | `face_tracker.py` | face center/box, zone, proximity, head orientation |
 | `gesture.py` | deterministic gesture classification |
 | `positions.py` | position classification + OpenCV drawing helpers |

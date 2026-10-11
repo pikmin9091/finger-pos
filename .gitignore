@@ -4,3 +4,7 @@ __pycache__/
 myenv/
 analytics_session_*.json
 analytics_session_*.csv
+# ML artifacts: user recordings (private) + trained models (retrainable).
+# Bootstrap smoke models are also local-only — retrain via train_model.py.
+data/
+models/*.joblib
