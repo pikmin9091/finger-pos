@@ -42,6 +42,25 @@ def test_group_split_no_session_leakage():
     assert len(train) == 2 and len(test) == 2
 
 
+def test_single_class_training_refused(tmp_path, monkeypatch):
+    import train_model
+    from collect import write_meta, write_sample
+    from test_gesture import make_landmarks
+    for i in range(2):
+        p = str(tmp_path / f"palm_{i}.jsonl")
+        with open(p, "w") as fh:
+            write_meta(fh, "OPEN_PALM", f"sess{i}")
+            for _ in range(4):
+                write_sample(fh, make_landmarks(
+                    {f: True for f in
+                     ["thumb", "index", "middle", "ring", "pinky"]}))
+    monkeypatch.setattr("sys.argv", ["train_model.py", "--data",
+                                     str(tmp_path), "--out",
+                                     str(tmp_path / "m.joblib")])
+    with pytest.raises(SystemExit):
+        train_model.main()
+
+
 def test_synthetic_bootstrap_trains_and_predicts():
     from ml_model import load_model, predict
     from train_model import build_synthetic, split_sessions, train_sessions

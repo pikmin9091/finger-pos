@@ -327,8 +327,35 @@ Rules: landmarks only (never video); train/test split is BY SESSION
 `evaluate_model.py` warns on session overlap, audits OPEN_PALM false
 positives (phantom privacy flips), and benches latency. Smoke-test the
 plumbing without a camera via `--synthetic` (geometric bootstrap, clearly
-labeled NOT a product model). Live-loop integration lands in Tahap E —
-nothing above changes current behavior.
+labeled NOT a product model). Training refuses single-class data (a
+one-label "model" is a constant predictor — one such file was found and
+deleted). Live-loop integration lands in Tahap E — nothing above changes
+current behavior.
+
+### ML evaluation (Tahap D — measured, synthetic unless noted)
+
+Real-camera check (2 recorded OPEN_PALM sessions, 1411 samples — the only
+real data so far): deterministic palm recall **0.847** vs synthetic-RF
+recall **0.335** (mean conf 0.516). The gap is real: recorded thumbs sit
+more along the palm axis (align 0.68 vs 0.34 synthetic) with wider spread.
+Conclusion: synthetic models do not transfer — product training needs all
+7 labels × ≥2 sessions (Tahap C unfinished).
+
+| Model (synthetic holdout) | acc | stress* acc | latency |
+|---|---|---|---|
+| RF (100 trees, depth 12) | 0.980 | 0.786 | ~7.0 ms |
+| MLP (64-unit, scaled) | 1.000 | 1.000 | ~0.4 ms |
+| deterministic (same samples) | 1.000 | 0.911 | ~0 ms |
+
+\*Stress = unseen rolls 45/135/225/315°, scales 0.6/1.6, 3× noise.
+palmFP = 0 everywhere. Threshold sweep (RF): 0.4–0.5 → acc 1.000,
+0.6 → 0.987, 0.8 → 0.750 — default 0.6 stays (privacy-conservative)
+until real multiclass data recalibrates it. MLP probas are flat-across-
+threshold on synthetic (likely overconfident — verify on real data).
+
+Decision: **MLP primary candidate, RF fallback** (robustness + 18×
+faster inference); final call after real data. `--model both` now saves
+both files (fixed a bug where MLP was silently dropped).
 
 Manual protocol (required before trusting a new gesture mapping): in varied
 lighting, distances (0.4–1.2 m), both hands, and ±45° roll, hold each
@@ -446,7 +473,7 @@ Six layers keep the output steady on live video:
 python3 -m pytest
 ```
 
-235 unit tests (synthetic landmarks + mocked action runner, no webcam/hardware needed).
+236 unit tests (synthetic landmarks + mocked action runner, no webcam/hardware needed).
 
 ## Project structure
 

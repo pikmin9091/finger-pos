@@ -222,6 +222,11 @@ def main():
                              "(one file per run) for a session split")
     train, test = split_sessions(sessions, args.test_size, args.seed)
     print(f"sessions: {len(train)} train / {len(test)} test", flush=True)
+    if len({s["label"] for s in train}) < 2:
+        raise SystemExit(
+            "ERROR: training needs >= 2 distinct labels — a single-class "
+            "model is a constant predictor (it would label EVERY gesture "
+            "as that class). Record more labels with collect.py first.")
 
     wanted = ("rf", "mlp") if args.model == "both" else (args.model,)
     saved = None
@@ -231,19 +236,18 @@ def main():
         ms = (time.time() - t0) * 1000.0
         print(f"--- {mtype} (train {ms:.0f} ms) ---")
         print_report(report, test)
-        if mtype == "rf" or args.model != "both":
-            meta = {"model_type": mtype, "params": getattr(
-                        pipe[-1], "get_params", lambda: {})(),
-                    "train_sessions": sorted({s["id"] for s in train}),
-                    "test_sessions": sorted({s["id"] for s in test}),
-                    "n_train": sum(len(s["samples"]) for s in train),
-                    "n_test": sum(len(s["samples"]) for s in test),
-                    "metrics": report,
-                    "bootstrap": bool(args.synthetic)}
-            saved = save_model(pipe, meta, args.out if mtype == "rf"
-                               else args.out.replace(".joblib",
-                                                     f"_{mtype}.joblib"))
-    print(f"Saved -> {saved}", flush=True)
+        out = (args.out if len(wanted) == 1 or mtype == "rf"
+               else args.out.replace(".joblib", f"_{mtype}.joblib"))
+        meta = {"model_type": mtype, "params": getattr(
+                    pipe[-1], "get_params", lambda: {})(),
+                "train_sessions": sorted({s["id"] for s in train}),
+                "test_sessions": sorted({s["id"] for s in test}),
+                "n_train": sum(len(s["samples"]) for s in train),
+                "n_test": sum(len(s["samples"]) for s in test),
+                "metrics": report,
+                "bootstrap": bool(args.synthetic)}
+        saved = save_model(pipe, meta, out)
+        print(f"Saved -> {saved}", flush=True)
 
 
 if __name__ == "__main__":

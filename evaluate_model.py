@@ -50,6 +50,9 @@ def main():
     ap.add_argument("--baseline", action="store_true")
     ap.add_argument("--bench", type=int, default=200)
     ap.add_argument("--threshold", type=float, default=0.6)
+    ap.add_argument("--thresholds", nargs="*", type=float, default=None,
+                    help="sweep thresholds, e.g. --thresholds 0.4 0.5 0.6 "
+                         "0.7 0.8 (accuracy vs UNKNOWN tradeoff table)")
     args = ap.parse_args()
 
     pipe, meta = load_model(args.model)
@@ -87,6 +90,25 @@ def main():
     unk = sum(1 for p in y_pred if p == "UNKNOWN")
     print(f"UNKNOWN rate: {unk}/{len(y_pred)} "
           f"({unk / max(1, len(y_pred)):.3f})")
+
+    if args.thresholds:
+        # Threshold calibration table (Tahap D): accuracy vs UNKNOWN
+        # rate vs palm false positives across candidate thresholds.
+        flat = [smp for s in sessions for smp in s["samples"]]
+        print("--- threshold sweep ---")
+        print(f"  {'thr':>5s} {'acc':>6s} {'unknown':>8s} {'palmFP':>7s} "
+              f"{'missPalm':>9s}")
+        for thr in args.thresholds:
+            yp = [predict(pipe, s["landmarks"], threshold=thr)[0]
+                  for s in flat]
+            acc = sum(a == b for a, b in zip(y_true, yp)) / len(y_true)
+            u = sum(1 for p in yp if p == "UNKNOWN")
+            fpp = sum(1 for t, p in zip(y_true, yp)
+                      if t != "OPEN_PALM" and p == "OPEN_PALM")
+            fnn = sum(1 for t, p in zip(y_true, yp)
+                      if t == "OPEN_PALM" and p != "OPEN_PALM")
+            print(f"  {thr:>5.2f} {acc:>6.3f} "
+                  f"{u / len(yp):>8.3f} {fpp:>7d} {fnn:>9d}")
 
     if args.baseline:
         # Same samples through the deterministic classifier.
