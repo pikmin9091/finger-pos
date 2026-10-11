@@ -113,6 +113,7 @@ Opt-in only. Primary hand drives allowlisted actions. Overlay shows
 | Fist ✊ | previous track |
 | Index up ☝️ | mute toggle |
 | Thumbs down 👎 | master toggle off/on |
+| Swipe hand ↔️ (opt-in `--swipe-workspace`) | previous/next Hyprland workspace |
 | Pinch (master OFF / no `--control`) | privacy-blur toggle (unchanged) |
 
 PINCH is never used for volume: with master ON it does nothing (privacy
@@ -228,6 +229,7 @@ Satu gesture = satu aksi; menahan tidak mengulang.
 | Kepalan ✊ | Lagu sebelumnya | — |
 | Telunjuk ☝️ | Mute/unmute | — |
 | Jempol ke bawah 👎 | Master toggle on/off | Metafora "tidak" |
+| Swipe tangan ↔️ | Workspace prev/next (Hyprland) | Hanya dengan `--swipe-workspace`; butuh master ON, gagal-netral + cooldown 1,5 dtk seperti aksi lain |
 | Cubit/PINCH 🤏 | Toggle blur (master OFF) / tidak dipakai (master ON) | Volume **tidak pernah** pakai PINCH |
 
 **Mode volume (tinggi tangan):** tahan telapak → baris `VOLUME MODE: ACTIVE`
@@ -241,6 +243,7 @@ tangan diam = tidak ada perintah baru.
 | Flag | Default | Efek |
 |------|---------|------|
 | `--control` | off | Aktifkan subsistem gesture-control |
+| `--swipe-workspace` | off | Opt-in: swipe tangan kiri/kanan pindah workspace Hyprland (butuh `--control`; nonaktif dengan profil `calm`/`--no-motion`) |
 | `--control-profile` | `default` | `calm` = confidence ≥0,8 + tahan 1 dtk + tanpa motion |
 | `--no-motion` | off | Matikan pemicu gerakan/swipe |
 | `--vol-top` / `--vol-bottom` | `0.25` / `0.75` | Batas kalibrasi tinggi tangan → 100%/0% |
@@ -286,7 +289,11 @@ Hold OPEN_PALM, FIST, then PINCH (~4 s each). The app collects landmark
 geometry only, derives `pinch_threshold`/`thumb_extend`/`thumb_fold`, and
 saves `~/.config/finger-pos/calib.json` (override with nothing to share —
 no images). Rejected sessions print reasons and change nothing. Live and
-static modes auto-load the file when present.
+static modes auto-load the file when present. Loaded values are
+range-checked (`apply_calib`): an inseparable thumb pair (span < 0.05) or
+an out-of-range pinch threshold is ignored with defaults kept, so one bad
+session cannot silently break recognition — recalibrate or delete the file
+if thumbs stop registering.
 
 ### Measuring accuracy (honestly)
 
@@ -415,7 +422,7 @@ Six layers keep the output steady on live video:
 python3 -m pytest
 ```
 
-208 unit tests (synthetic landmarks + mocked action runner, no webcam/hardware needed).
+217 unit tests (synthetic landmarks + mocked action runner, no webcam/hardware needed).
 
 ## Project structure
 

@@ -41,6 +41,13 @@ ALLOWLIST = {
     "control_toggle": ("edge", 1.0, "CONTROL"),
 }
 
+# Opt-in swipe mapping (off by default): continuous hand motion is the
+# most accident-prone trigger, so workspace swipes require explicit
+# `--swipe-workspace` and never load in the `calm` preset (motion off).
+SWIPE_MAP = {
+    "MOVE_RIGHT": "workspace_next",
+    "MOVE_LEFT": "workspace_prev",
+}
 # default trigger -> action. OPEN_PALM is contextual (see update):
 # master off -> enables control; master on -> enters/exits volume mode.
 # THUMBS_DOWN toggles the master off/on. PINCH is NOT mapped here — with
@@ -68,7 +75,7 @@ class ControlEngine:
 
     def __init__(self, action_map=None, enabled=True, min_confidence=0.5,
                  dwell=0.0, motion=True, preset=None,
-                 vol_top=None, vol_bottom=None):
+                 vol_top=None, vol_bottom=None, swipe_workspaces=False):
         if preset in self.PRESETS:
             p = self.PRESETS[preset]
             min_confidence = p["min_confidence"]
@@ -80,6 +87,12 @@ class ControlEngine:
                 if action in ALLOWLIST:
                     self.map[trigger] = action
                 # unknown actions are silently ignored (never executed)
+        if swipe_workspaces:
+            # Opt-in only; an explicit user mapping for the same trigger
+            # always wins over the swipe default.
+            for trigger, action in SWIPE_MAP.items():
+                if trigger not in self.map and action in ALLOWLIST:
+                    self.map[trigger] = action
         self.enabled = enabled
         self.min_confidence = min_confidence
         self.dwell = max(0.0, dwell)  # seconds a trigger must persist before firing

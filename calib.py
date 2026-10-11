@@ -98,6 +98,10 @@ def summarize(detector, samples_by_pose):
     if o_mean <= f_mean:
         return {}, ["thumb reach not separable (open must exceed fist)"]
     mid, span = (o_mean + f_mean) / 2.0, o_mean - f_mean
+    if span < 0.08:
+        return {}, ["thumb reach barely separable "
+                    f"(span {span:.3f} < 0.08) — hold poses closer to the "
+                    "camera with the thumb fully out/in and retry"]
     thumb_extend = round(mid + span / 4.0, 3)
     thumb_fold = round(max(0.05, mid - span / 4.0), 3)
 

@@ -219,3 +219,33 @@ def test_calm_preset():
     assert e.update("POINT", 0.7, "STATIONARY", 0.0) is None  # below 0.8
     assert e.update("POINT", 0.9, "STATIONARY", 1.0) is None  # dwell not met
     assert e.update("POINT", 0.9, "STATIONARY", 2.0) == "mute_toggle"
+
+
+def test_swipe_off_by_default():
+    e = eng()
+    assert "MOVE_RIGHT" not in e.map and "MOVE_LEFT" not in e.map
+    assert e.update("NONE", 0.0, "RIGHT", 0.0) is None
+    assert e.update("NONE", 0.0, "LEFT", 1.0) is None
+
+
+def test_swipe_workspaces_opt_in():
+    e = eng(swipe_workspaces=True)
+    assert e.update("NONE", 0.0, "RIGHT", 0.0) == "workspace_next"
+    assert e.update("NONE", 0.0, "RIGHT", 0.5) is None  # latched while held
+    e.update("NONE", 0.0, "STATIONARY", 1.0)  # neutral re-arms
+    assert e.update("NONE", 0.0, "LEFT", 2.0) == "workspace_prev"
+
+
+def test_swipe_gated_by_master_and_motion():
+    e = eng(enabled=False, swipe_workspaces=True)
+    assert e.update("NONE", 0.0, "RIGHT", 0.0) is None
+    e = eng(motion=False, swipe_workspaces=True)
+    assert e.update("NONE", 0.0, "RIGHT", 0.0) is None
+    e = eng(preset="calm", swipe_workspaces=True)  # calm kills motion
+    assert e.update("NONE", 0.0, "RIGHT", 0.0) is None
+
+
+def test_swipe_custom_map_wins():
+    e = eng(action_map={"MOVE_RIGHT": "media_next"}, swipe_workspaces=True)
+    assert e.update("NONE", 0.0, "RIGHT", 0.0) == "media_next"
+    assert e.update("NONE", 0.0, "LEFT", 2.0) == "workspace_prev"

@@ -64,12 +64,59 @@ class GestureDetector:
         self.thumb_extend = self.THUMB_EXTEND_RATIO
         self.thumb_fold = self.THUMB_FOLD_RATIO
 
+    # Bounds for calibration overrides (see calib.py). Values outside
+    # these ranges come from bad sessions (e.g. poses held at odd
+    # distances) and are ignored so one bad calibration cannot break
+    # gesture recognition; the built-in defaults stay in effect.
+    CALIB_PINCH_RANGE = (0.01, 0.60)
+    CALIB_THUMB_RANGE = (0.05, 1.50)
+    CALIB_THUMB_MIN_SPAN = 0.05
+    CALIB_ANGLE_RANGE = (30.0, 180.0)
+    CALIB_ANGLE_MIN_SPAN = 5.0
+
     def apply_calib(self, calib):
-        """Override thresholds from a calibration dict (see calib.py)."""
-        for key in ("pinch_threshold", "straight_deg", "folded_deg",
-                    "thumb_extend", "thumb_fold"):
-            if key in calib:
-                setattr(self, key, float(calib[key]))
+        """Override thresholds from a calibration dict (see calib.py).
+
+        Each value is range-checked; out-of-range entries are ignored
+        (never raise, never half-apply a pair).
+        """
+        if not isinstance(calib, dict):
+            return
+        pinch = calib.get("pinch_threshold")
+        if pinch is not None:
+            try:
+                pinch = float(pinch)
+            except (TypeError, ValueError):
+                pinch = None
+            lo, hi = self.CALIB_PINCH_RANGE
+            if pinch is not None and lo <= pinch <= hi:
+                self.pinch_threshold = pinch
+        ext = calib.get("thumb_extend")
+        fold = calib.get("thumb_fold")
+        try:
+            ext = float(ext) if ext is not None else None
+            fold = float(fold) if fold is not None else None
+        except (TypeError, ValueError):
+            ext, fold = None, None
+        if ext is not None and fold is not None:
+            lo, hi = self.CALIB_THUMB_RANGE
+            if (lo <= fold < ext <= hi
+                    and ext - fold >= self.CALIB_THUMB_MIN_SPAN):
+                self.thumb_extend = ext
+                self.thumb_fold = fold
+        straight = calib.get("straight_deg")
+        folded = calib.get("folded_deg")
+        try:
+            straight = float(straight) if straight is not None else None
+            folded = float(folded) if folded is not None else None
+        except (TypeError, ValueError):
+            straight, folded = None, None
+        if straight is not None and folded is not None:
+            lo, hi = self.CALIB_ANGLE_RANGE
+            if (lo <= folded < straight <= hi
+                    and straight - folded >= self.CALIB_ANGLE_MIN_SPAN):
+                self.straight_deg = straight
+                self.folded_deg = folded
 
     def reset(self):
         """Clear debounce state (call when the hand is lost)."""

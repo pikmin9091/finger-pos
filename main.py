@@ -245,6 +245,10 @@ def main():
                              "(confident held gestures only, no motion) (default: default)")
     parser.add_argument("--no-motion", action="store_true",
                         help="disable motion/swipe triggers in gesture control")
+    parser.add_argument("--swipe-workspace", action="store_true",
+                        help="opt-in: horizontal hand swipes switch Hyprland "
+                             "workspaces (needs --control, ignored with "
+                             "--control-profile calm or --no-motion)")
     parser.add_argument("--vol-top", type=float, default=0.25,
                         help="hand height (0 top) mapping to volume 100%% "
                              "(default: 0.25)")
@@ -296,11 +300,15 @@ def main():
         if args.control_profile == "calm":
             engine = ControlEngine(preset="calm")
         else:  # recommended timing: confident + held gestures
-            engine = ControlEngine(min_confidence=0.8, dwell=0.7)
+            engine = ControlEngine(min_confidence=0.8, dwell=0.7,
+                                   swipe_workspaces=args.swipe_workspace)
         engine.vol_top = args.vol_top
         engine.vol_bottom = args.vol_bottom
         if args.no_motion:
             engine.motion = False
+        if args.swipe_workspace and not engine.motion:
+            print("NOTE: --swipe-workspace needs motion triggers "
+                  "(ignored with calm profile / --no-motion)", flush=True)
     player, vol, hypr = MediaPlayer(), Volume(), Hyprland()
     if args.control:
         print(f"Gesture control ON (OPEN PALM toggles, C key too) | "
