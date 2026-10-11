@@ -18,9 +18,11 @@ async function api(path, opts = {}) {
 const post = (p, body) => api(p, {method: "POST", body: body ? JSON.stringify(body) : undefined});
 
 function toast(t) {
-  $("toast").textContent = t;
+  const el = document.getElementById("toast");
+  el.textContent = t;
+  el.classList.add("show");
   clearTimeout(toast._t);
-  toast._t = setTimeout(() => { $("toast").textContent = ""; }, 4000);
+  toast._t = setTimeout(() => { el.classList.remove("show"); }, 3000);
 }
 
 function pill(id, mode) { // mode: on|bad|off
