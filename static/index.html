@@ -1,0 +1,97 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>finger-pos · AI Camera</title>
+<link rel="stylesheet" href="/static/style.css">
+</head>
+<body>
+<div id="app">
+  <aside id="sidebar">
+    <div class="brand">◉ FINGER-POS</div>
+    <nav>
+      <a href="#sec-dash" class="active">Dashboard</a>
+      <a href="#sec-gesture">Gesture</a>
+      <a href="#sec-music">Music</a>
+      <a href="#sec-volume">Volume</a>
+      <a href="#sec-settings">Settings</a>
+      <a href="#sec-logs">Logs</a>
+    </nav>
+    <div class="side-foot">local-only · 127.0.0.1</div>
+  </aside>
+  <main>
+    <header>
+      <span class="title">AI CAMERA</span>
+      <span class="pill" id="h-cam">● camera</span>
+      <span class="pill" id="h-back">● backend</span>
+      <span class="pill" id="h-ws">● ws</span>
+    </header>
+
+    <section id="sec-dash" class="panel wide">
+      <div class="camrow">
+        <img id="video" alt="camera offline">
+        <div class="cambtns">
+          <button id="b-start">Start Camera</button>
+          <button id="b-stop">Stop Camera</button>
+          <button id="b-gon">Enable Gestures</button>
+          <button id="b-goff">Disable Gestures</button>
+          <label class="dbg"><input type="checkbox" id="c-debug"> debug</label>
+        </div>
+      </div>
+      <div id="toast"></div>
+    </section>
+
+    <section id="sec-gesture" class="panel">
+      <h2>Gesture <span id="g-state" class="badge">UNKNOWN</span></h2>
+      <div class="bigname" id="g-name">—</div>
+      <div class="bar"><div id="g-conf"></div></div>
+      <div class="kv"><span>raw</span><b id="g-raw">—</b></div>
+      <div class="kv"><span>reason</span><b id="g-reason">—</b></div>
+      <div class="kv"><span>hands</span><b id="g-hands">0</b></div>
+      <div class="kv"><span>faces</span><b id="g-faces">0</b></div>
+    </section>
+
+    <section id="sec-music" class="panel">
+      <h2>Music</h2>
+      <div class="bigname small" id="m-track">no player</div>
+      <div class="kv"><span>control</span><b id="m-ctl">—</b></div>
+      <div class="btnrow">
+        <button id="m-prev">⏮ prev</button>
+        <button id="m-toggle">⏯ play/pause</button>
+        <button id="m-next">next ⏭</button>
+      </div>
+    </section>
+
+    <section id="sec-volume" class="panel">
+      <h2>Volume <span id="v-mode" class="badge">manual</span></h2>
+      <div class="bigname"><span id="v-pct">—</span><span class="pct">%</span></div>
+      <input type="range" id="v-slider" min="0" max="100" value="50">
+      <div class="btnrow">
+        <button id="v-down">−</button>
+        <button id="v-mute">mute</button>
+        <button id="v-up">+</button>
+      </div>
+      <div class="kv"><span>muted</span><b id="v-muted">—</b></div>
+    </section>
+
+    <section id="sec-settings" class="panel">
+      <h2>Settings</h2>
+      <label>smoothing <input type="range" id="s-smooth" min="0" max="100" value="20"><b id="s-smooth-v">0.20</b></label>
+      <label>debounce <input type="range" id="s-debounce" min="1" max="10" value="3"><b id="s-debounce-v">3</b></label>
+      <label>strength <input type="range" id="s-strength" min="1" max="10" value="5"><b id="s-strength-v">5</b></label>
+      <label>blur <select id="s-kind"><option>GAUSSIAN</option><option>PIXELATE</option></select></label>
+      <label>privacy <select id="s-privacy"><option>OFF</option><option>FACE_BLUR</option><option>STRICT</option><option>AUTO</option></select></label>
+      <label>sensitivity <select id="s-sens"><option value="low">low</option><option value="normal" selected>normal</option><option value="high">high</option></select></label>
+      <button id="s-apply">Apply</button>
+    </section>
+
+    <section id="sec-logs" class="panel wide">
+      <h2>Event log</h2>
+      <ol id="log"></ol>
+    </section>
+  </main>
+</div>
+<script src="/static/app.js"></script>
+</body>
+</html>

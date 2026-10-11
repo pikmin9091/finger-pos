@@ -11,6 +11,7 @@ Real-time hand + face tracking with MediaPipe — fingertip positions, movement 
 - **Real-time analytics** — live counts, stable tracking IDs, enter/exit events with durations (exits need 5 consecutive missed frames, so brief detection gaps don't spam pairs), gesture/looking distributions, inference latency, session export to JSON/CSV
 - **Text-only overlay** — one thin box per detected object plus plain status lines (gesture, face, blur, FPS), no distracting graphics
 - **Gesture Control Center** (`--control`) — hand gestures drive media (MPRIS), volume (`wpctl`), and Hyprland workspaces (`hyprctl`) via an allowlist; per-action cooldowns, master toggle, text status lines + notifications
+- **Web dashboard** (`run_web.sh`) — localhost FastAPI + MJPEG + WebSocket UI reusing the same pipeline: gesture/volume/music cards, settings form, event log
 
 - **Fingertip tracking** — normalized `x, y, z` (0.0–1.0) for all 5 fingertips
 - **Position classification** — `LEFT/CENTER/RIGHT` and `TOP/CENTER/BOTTOM` per finger
@@ -42,7 +43,28 @@ pip install -r requirements.txt
 
 ## Usage
 
-### Live camera
+### Web dashboard (localhost)
+
+```fish
+cd ~/finger-pos
+./myenv/bin/pip install fastapi "uvicorn[standard]" httpx  # once, venv only
+./run_web.sh
+xdg-open http://127.0.0.1:8000  # dashboard
+```
+
+Binds `127.0.0.1:8000` only — never exposed to LAN. Same pipeline as
+`main.py` (no duplicate inference): MJPEG video with server-side overlays,
+gesture/volume/music cards, settings form, event log, debug toggle.
+Stop with `Ctrl+C` (camera released on shutdown).
+
+API: `GET /api/status`, `POST /api/camera/start|stop`,
+`POST /api/gestures/enable|disable`, `GET|PUT /api/settings` (allowlisted
+keys, validated), `POST /api/media/{play_pause,next,previous}`,
+`POST /api/volume/{up,down,mute|set}`, `POST /api/privacy/mode`,
+`GET /video` (MJPEG), `WS /ws` (10 Hz state + events, auto-reconnect).
+No arbitrary-execution endpoint exists by design.
+
+### Live camera (terminal UI)
 
 ```bash
 python3 main.py
@@ -393,7 +415,7 @@ Six layers keep the output steady on live video:
 python3 -m pytest
 ```
 
-194 unit tests (synthetic landmarks + mocked action runner, no webcam/hardware needed).
+208 unit tests (synthetic landmarks + mocked action runner, no webcam/hardware needed).
 
 ## Project structure
 
@@ -408,6 +430,10 @@ python3 -m pytest
 | `analytics.py` | session stats, tracking IDs, events, JSON/CSV export |
 | `actions.py` | allowlisted media/volume/Hyprland executors (busctl/wpctl/hyprctl) |
 | `control.py` | gesture→action engine: edges, cooldowns, master toggle, mapping |
+| `webcam.py` | camera thread manager reusing the pipeline (latest-frame buffer) |
+| `webapp.py` | FastAPI backend: REST + WebSocket + MJPEG on 127.0.0.1:8000 |
+| `static/` | dashboard frontend (vanilla HTML/CSS/JS, no build step) |
+| `run_web.sh` | launch script for the web backend |
 | `calib.py` | per-user threshold calibration (JSON, landmarks only) |
 | `eval_gestures.py` | synthetic robustness eval: accuracy, confusion, latency |
 | `tracker.py` | fingertip positions, smoothing, movement |
