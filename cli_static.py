@@ -34,10 +34,10 @@ print(f"Hands: {len(entries)}")
 for n, (h, e) in enumerate(zip(hands, entries)):
     tips = get_finger_tips(h["landmarks"])
     g = e["gesture"]
-    pinch = "PINCH" in g["gesture"]
+    palm = g["gesture"] == "OPEN_PALM"
     print(f"Hand {n}: {h['handedness']} (conf={h['confidence']:.2f}) "
           f"gesture={g['gesture']} (conf={g['confidence']:.2f} stable={g['stable']}) "
-          f"{'<-- blur toggle gesture' if pinch else ''}")
+          f"{'<-- privacy toggle gesture (hold in live mode)' if palm else ''}")
     if args.debug:
         print(f"  raw={g.get('raw')} state={g.get('state')} reason={g.get('reason')} "
               f"scores={g.get('scores')}")

@@ -15,7 +15,7 @@ existing gesture mapping. All decisions use the single detection
 result already produced per frame — no extra inference.
 """
 
-from blur import BlurToggle, FaceBoxMemory
+from blur import BlurToggle, FaceBoxMemory, PalmHoldToggle
 
 MODES = ("OFF", "FACE_BLUR", "STRICT", "AUTO")
 BLUR_KINDS = ("GAUSSIAN", "PIXELATE")
@@ -42,8 +42,9 @@ class PrivacyController:
     def __init__(self, mode="OFF", rules=None, cooldown=1.0):
         self.mode = mode if mode in MODES else "OFF"
         self.rules = rules or PrivacyRules()
-        self.last_blur_mode = "FACE_BLUR"  # PINCH toggles OFF <-> this
+        self.last_blur_mode = "FACE_BLUR"  # palm toggles OFF <-> this
         self.toggle = BlurToggle(cooldown=cooldown)
+        self.palm = PalmHoldToggle()  # open-palm hold-to-toggle
         self.memory = FaceBoxMemory(grace=self.rules.grace)
 
     def toggle_mode(self):
@@ -69,9 +70,20 @@ class PrivacyController:
         return self.rules.blur_kind
 
     def update_pinch(self, is_pinch, timestamp):
-        """Feed stable-PINCH state; flips OFF <-> blur mode on rising edge."""
+        """Feed stable-PINCH state; flips OFF <-> blur mode on rising edge.
+
+        Kept for compatibility (unit-tested); the live loop now uses
+        the open-palm hold toggle via update_palm instead.
+        """
         was = self.toggle.enabled
         if self.toggle.update(is_pinch, timestamp) != was:
+            self.toggle_mode()
+        return self.mode
+
+    def update_palm(self, is_palm, hand_present, timestamp):
+        """Feed stable-OPEN_PALM state; hold-to-toggle OFF <-> blur mode."""
+        was = self.palm.enabled
+        if self.palm.update(is_palm, hand_present, timestamp) != was:
             self.toggle_mode()
         return self.mode
 

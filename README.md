@@ -6,8 +6,8 @@ Real-time hand + face tracking with MediaPipe — fingertip positions, movement 
 
 - **Multi-hand tracking** — up to 2 hands, each with its own smoothing + gesture debounce slot (matched by wrist-anchor proximity across frames)
 - **Multi-face tracking** — up to 4 faces, ordered left-to-right
-- **Gesture-controlled face blur** — stable PINCH toggles Gaussian blur on all visible faces (edge-triggered + cooldown, state persists with no hands); last-known boxes cover brief detection drops
-- **Smart Privacy Mode** — `OFF / FACE_BLUR / STRICT / AUTO` with configurable rules, Gaussian or pixelate obfuscation, PINCH or `M`/`P` keys to switch
+- **Gesture-controlled face blur** — open-palm hold (~0.5 s) toggles Gaussian blur on all visible faces (hold-to-fire + release-gated, state persists with no hands); last-known boxes cover brief detection drops
+- **Smart Privacy Mode** — `OFF / FACE_BLUR / STRICT / AUTO` with configurable rules, Gaussian or pixelate obfuscation, open-palm hold or `M`/`P` keys to switch
 - **Real-time analytics** — live counts, stable tracking IDs, enter/exit events with durations (exits need 5 consecutive missed frames, so brief detection gaps don't spam pairs), gesture/looking distributions, inference latency, session export to JSON/CSV
 - **Text-only overlay** — one thin box per detected object plus plain status lines (gesture, face, blur, FPS), no distracting graphics
 - **Gesture Control Center** (`--control`) — hand gestures drive media (MPRIS), volume (`wpctl`), and Hyprland workspaces (`hyprctl`) via an allowlist; per-action cooldowns, master toggle, text status lines + notifications
@@ -114,10 +114,12 @@ Opt-in only. Primary hand drives allowlisted actions. Overlay shows
 | Index up ☝️ | mute toggle |
 | Thumbs down 👎 | master toggle off/on |
 | Swipe hand ↔️ (opt-in `--swipe-workspace`) | previous/next Hyprland workspace |
-| Pinch (master OFF / no `--control`) | privacy-blur toggle (unchanged) |
+| Pinch 🤏 | (retired — no action; privacy toggle is now the open-palm hold) |
 
-PINCH is never used for volume: with master ON it does nothing (privacy
-owns it only while master is off). Volume lives entirely in volume mode.
+PINCH currently does nothing. Under `--control` the open palm already
+drives master on/off + volume mode, so the palm-privacy toggle lives in
+plain mode (no `--control`); with `--control`, switch privacy via the
+`M`/`P` keys. Volume lives entirely in volume mode.
 
 **Volume mode (hand height):** hold OPEN_PALM → `VOLUME MODE: ACTIVE`
 appears with 100/0 calibration markers at the frame edge → move the hand
@@ -182,7 +184,7 @@ keyboard, tombol klik, slider, gesture tangan, dan flag CLI terkait.
 | Tombol | Aksi | Syarat |
 |--------|------|--------|
 | `M` | Ganti mode privasi OFF→FACE_BLUR→STRICT→AUTO | — |
-| `P` | Toggle blur ON↔OFF (setara gesture PINCH) | — |
+| `P` | Toggle blur ON↔OFF (setara gestur telapak terbuka) | — |
 | `B` | Ganti jenis blur GAUSSIAN↔PIXELATE | — |
 | `C` | Master gesture-control ON/OFF | hanya dengan `--control` |
 | `H` | Tampilkan/sembunyikan panel bantuan | — |
@@ -230,7 +232,8 @@ Satu gesture = satu aksi; menahan tidak mengulang.
 | Telunjuk ☝️ | Mute/unmute | — |
 | Jempol ke bawah 👎 | Master toggle on/off | Metafora "tidak" |
 | Swipe tangan ↔️ | Workspace prev/next (Hyprland) | Hanya dengan `--swipe-workspace`; butuh master ON, gagal-netral + cooldown 1,5 dtk seperti aksi lain |
-| Cubit/PINCH 🤏 | Toggle blur (master OFF) / tidak dipakai (master ON) | Volume **tidak pernah** pakai PINCH |
+| Telapak terbuka ✋ (tahan ~0,5 dtk) | Toggle blur ON↔OFF | Hanya tanpa `--control`; dengan `--control` telapak milik master/volume, privasi via `M`/`P` |
+| Cubit/PINCH 🤏 | Tidak ada aksi (retired) | Klasifikasi tetap ada, tidak memicu apa pun |
 
 **Mode volume (tinggi tangan):** tahan telapak → baris `VOLUME MODE: ACTIVE`
 + garis kalibrasi 100/0 muncul → gerakan tangan naik/turun mengatur volume
@@ -316,18 +319,20 @@ fires (UNKNOWN is always acceptable).
 
 ### Gesture-controlled face blur
 
-PINCH (thumb tip + index tip together, held ~0.5 s until `[STABLE]`)
-toggles face blur on/off — unless gesture-control master is ON, in which
-case PINCH owns volume mode and privacy is switched via `M`/`P` keys.
-The toggle fires once per pinch (rising edge +
-1 s cooldown), so holding the pinch never retriggers; the on/off state
-persists even when no hand is visible. The preview shows
+OPEN_PALM (all five fingers extended, either hand, held ~0.5 s) toggles
+face blur on/off in plain mode (no `--control`) — under `--control` the
+palm already drives master/volume, so privacy there is switched via the
+`M`/`P` keys. The toggle fires once per hold; keeping the palm up never
+re-triggers, and the next toggle needs the hand to leave the frame or the
+gesture released for ≥0.5 s. The on/off state persists even when no hand
+is visible. The preview shows `PRIVACY ON`/`PRIVACY OFF` plus
 `BLUR: ON (N face(s))` in green (grey when off). Briefly dropped face
 detections fall back to last-known boxes (<0.75 s) so raw faces never
 flash; with `--no-face` there is nothing to blur (count stays 0).
 
-To test the gesture without a camera, photograph your own pinch and run
-`cli_static.py` — a PINCH line ends with `<-- blur toggle gesture`.
+To test the gesture without a camera, photograph your own open palm and
+run `cli_static.py` — an OPEN_PALM line ends with
+`<-- privacy toggle gesture (hold in live mode)`.
 
 ## Privacy & limitations
 
@@ -413,7 +418,7 @@ Six layers keep the output steady on live video:
 | Teleport guard | `tracker.py` | per-frame tip displacement clamped to `max_jump` (default 0.5): real fast motion converges in a few frames, one-frame spikes barely register |
 | EMA smoothing | `tracker.py`, `face_tracker.py` | exponential moving average on tips and on face center/box/yaw/pitch; per-subject state, auto-reset after hand/face loss |
 | Gesture debounce + hysteresis | `gesture.py` | new gestures must persist `debounce_frames`; PINCH exits at 1.5× the enter threshold; confidence is EMA-smoothed and always describes the returned (debounced) gesture |
-| Control state machine | `control.py` | hold-to-fire dwell, per-action cooldowns, WAIT_FOR_NEUTRAL re-arm, master gate; pinch-hold enters volume mode with deadzone + throttled targets |
+| Control state machine | `control.py` | hold-to-fire dwell, per-action cooldowns, WAIT_FOR_NEUTRAL re-arm, master gate; palm-hold enters volume mode with deadzone + throttled targets |
 | Slot hygiene | `multi.py` | missed-frame counters, debounce reset after prolonged loss, stale-slot pruning, hard slot cap |
 
 ## Tests
@@ -422,7 +427,7 @@ Six layers keep the output steady on live video:
 python3 -m pytest
 ```
 
-217 unit tests (synthetic landmarks + mocked action runner, no webcam/hardware needed).
+225 unit tests (synthetic landmarks + mocked action runner, no webcam/hardware needed).
 
 ## Project structure
 
@@ -432,7 +437,7 @@ python3 -m pytest
 | `detect.py` | MediaPipe HandLandmarker wrapper (up to 2 hands) |
 | `face.py` | MediaPipe FaceLandmarker wrapper (up to 4 faces) |
 | `multi.py` | per-hand tracker/gesture slots + per-face slots, position-matched |
-| `blur.py` | PINCH toggle state machine, face-box memory, Gaussian/pixelate blur |
+| `blur.py` | palm-hold toggle state machine, face-box memory, Gaussian/pixelate blur |
 | `privacy.py` | OFF/FACE_BLUR/STRICT/AUTO controller + auto rules |
 | `analytics.py` | session stats, tracking IDs, events, JSON/CSV export |
 | `actions.py` | allowlisted media/volume/Hyprland executors (busctl/wpctl/hyprctl) |

@@ -175,9 +175,12 @@ class CameraManager:
                     faces = []
                 infer_ms = (time.time() - infer_t0) * 1000.0
 
-                pinch_now = any(
-                    h["gesture"]["gesture"] == "PINCH"
-                    and h["gesture"]["stable"] for h in hands)
+                # No gesture privacy toggle here: the engine always exists
+                # and the palm already drives master/volume, so a second
+                # role would double-fire. Dashboard users switch privacy
+                # via Settings (/api/settings, /api/privacy/mode); the
+                # desktop preview (plain mode, no --control) uses the
+                # open-palm hold toggle.
                 if self.engine.enabled:
                     primary = hands[0] if hands else None
                     if primary is not None:
@@ -196,7 +199,7 @@ class CameraManager:
                             g["gesture"], g["confidence"],
                             hands[0]["movement"]["direction"], timestamp,
                             hand_present=True, gesture_stable=g["stable"])
-                    self.privacy.update_pinch(pinch_now, timestamp)
+                    # (no privacy gesture update: see note above)
 
                 priv = self.privacy.evaluate(faces, timestamp)
                 self.session.update(hands, faces, infer_ms, fps, timestamp)
@@ -231,6 +234,12 @@ class CameraManager:
                         (10, 145), cv2.FONT_HERSHEY_SIMPLEX, 0.6,
                         (0, 255, 0) if self.engine.enabled else (150, 150, 150),
                         2)
+                cv2.putText(
+                    overlay,
+                    f"PRIVACY {'ON' if self.privacy.mode != 'OFF' else 'OFF'}",
+                    (10, 170), cv2.FONT_HERSHEY_SIMPLEX, 0.6,
+                    (0, 255, 0) if self.privacy.mode != "OFF" else (150, 150, 150),
+                    2)
                 ok, buf = cv2.imencode(".jpg", overlay, [cv2.IMWRITE_JPEG_QUALITY, 80])
                 h, w = frame.shape[:2]
                 g0 = hands[0]["gesture"] if hands else None

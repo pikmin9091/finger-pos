@@ -44,6 +44,68 @@ class BlurToggle:
         self._last_toggle = float("-inf")
 
 
+class PalmHoldToggle:
+    """Open-palm hold-to-toggle for privacy mode.
+
+    The palm must be held continuously for `hold_s` seconds before one
+    toggle fires; holding it longer never refires. Re-arming needs the
+    hand to leave the frame or the gesture released for `release_s`
+    seconds. The on/off state persists regardless of hand presence, so
+    faces stay blurred until the next toggle.
+    """
+
+    def __init__(self, hold_s=0.5, release_s=0.5):
+        self.hold_s = max(0.0, hold_s)
+        self.release_s = max(0.0, release_s)
+        self.enabled = False
+        self._hold_since = None
+        self._released_since = None
+        self._armed = True
+
+    def update(self, is_palm, hand_present=True, timestamp=None):
+        """Feed the stable-OPEN_PALM state + hand presence.
+
+        Returns blur enabled. Toggles at most once per palm press.
+        """
+        if timestamp is None:
+            timestamp = time.time()
+        if not hand_present:
+            # Hand left the frame: cancel any pending hold and re-arm
+            # at once; the on/off state itself is untouched.
+            self._hold_since = None
+            self._released_since = None
+            self._armed = True
+            return self.enabled
+        if is_palm:
+            self._released_since = None
+            if not self._armed:
+                self._hold_since = None
+                return self.enabled
+            if self._hold_since is None:
+                self._hold_since = timestamp
+            if timestamp - self._hold_since >= self.hold_s:
+                self.enabled = not self.enabled
+                self._armed = False
+                self._hold_since = None
+            return self.enabled
+        # Hand visible but not an open palm: cancel the hold; a
+        # sustained release re-arms for the next press.
+        self._hold_since = None
+        if not self._armed:
+            if self._released_since is None:
+                self._released_since = timestamp
+            if timestamp - self._released_since >= self.release_s:
+                self._armed = True
+                self._released_since = None
+        return self.enabled
+
+    def reset(self):
+        self.enabled = False
+        self._hold_since = None
+        self._released_since = None
+        self._armed = True
+
+
 class FaceBoxMemory:
     """Remembers last seen face boxes for a short grace period.
 

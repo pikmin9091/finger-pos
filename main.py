@@ -256,7 +256,7 @@ def main():
                         help="hand height mapping to volume 0%% (default: 0.75)")
     args = parser.parse_args()
 
-    print("Live AI camera — PINCH toggles privacy | keys: M P B C S R H Q", flush=True)
+    print("Live AI camera — hold OPEN PALM 0.5 s toggles privacy | keys: M P B C S R H Q", flush=True)
     conf = {"low": 0.65, "normal": 0.5, "high": 0.35}[args.sensitivity]
     set_hand_conf(conf, conf, conf)
     set_face_conf(conf, conf, conf)
@@ -356,11 +356,16 @@ def main():
                         face_warned = True
             infer_ms = (time.time() - infer_t0) * 1000.0
 
-            # PINCH owns the privacy toggle whenever gesture-control
-            # master is off (or control is absent). Volume no longer
-            # depends on pinch at all — it uses OPEN_PALM + hand height.
-            pinch_now = any(h["gesture"]["gesture"] == "PINCH"
-                            and h["gesture"]["stable"] for h in hands)
+            # Open palm owns the privacy toggle in plain mode (no
+            # --control): hold ~0.5 s to flip, release (or leave frame)
+            # to re-arm. Under --control the palm already drives master
+            # on/off + volume mode, so a second role here would
+            # double-fire — privacy then uses the M/P keys. Stable +
+            # confidence-gated, both hands alike.
+            palm_now = any(h["gesture"]["gesture"] == "OPEN_PALM"
+                           and h["gesture"]["stable"]
+                           and h["gesture"]["confidence"] >= 0.5
+                           for h in hands)
             if engine is not None:
                 if hands:
                     g = hands[0]["gesture"]
@@ -378,9 +383,9 @@ def main():
                 if timestamp - ctrl["status_at"] > 2.5:
                     ctrl["status_at"] = timestamp
                     _refresh_status(player, vol, ctrl)
-            if (engine is None or not engine.enabled) and not blur_locked_off:
+            if engine is None and not blur_locked_off:
                 before = privacy.mode
-                privacy.update_pinch(pinch_now, timestamp)
+                privacy.update_palm(palm_now, bool(hands), timestamp)
                 if privacy.mode != before:
                     msg = f"Privacy mode -> {privacy.mode}"
                     toasts.push(msg, (0, 255, 0), timestamp)
@@ -442,6 +447,11 @@ def main():
                     overlay = draw_face_text(overlay, face, y=90 + i * 25)
                 overlay = draw_blur_status(overlay, priv["active"],
                                            data["blur"]["faces_blurred"], y=120)
+                cv2.putText(overlay,
+                            f"PRIVACY {'ON' if privacy.mode != 'OFF' else 'OFF'}",
+                            (10, 210), cv2.FONT_HERSHEY_SIMPLEX, 0.6,
+                            (0, 255, 0) if privacy.mode != "OFF" else (150, 150, 150),
+                            2)
                 if engine is not None:
                     cv2.putText(overlay,
                                 f"CONTROL: {'ON' if engine.enabled else 'OFF'}"
